@@ -194,7 +194,13 @@ export default function PassengerBookings() {
         </div>
       </div>
 
-      {detailsBooking && <BookingDetailsModal booking={detailsBooking} onClose={() => setDetailsBooking(null)} />}
+      {detailsBooking && (
+        <BookingDetailsModal
+          booking={detailsBooking}
+          currentUserId={user!.id}
+          onClose={() => setDetailsBooking(null)}
+        />
+      )}
 
       {reviewingBooking && (
         <ReviewModal

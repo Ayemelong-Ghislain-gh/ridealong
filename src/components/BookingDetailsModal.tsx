@@ -1,10 +1,16 @@
+import { useState } from 'react'
+import { ChatModal } from './ChatModal'
+import { LiveLocationMap } from './LiveLocationMap'
+
 interface BookingDetailsModalProps {
   booking: {
+    id: string
     booking_reference: string
     seats_booked: number
     status: string
     created_at: string
     trip: {
+      driver_id: string
       departure_date: string
       departure_time: string
       price_per_seat: number
@@ -13,11 +19,15 @@ interface BookingDetailsModalProps {
       users?: { full_name: string } | null
     } | null
   }
+  currentUserId: string
   onClose: () => void
 }
 
-export function BookingDetailsModal({ booking, onClose }: BookingDetailsModalProps) {
+export function BookingDetailsModal({ booking, currentUserId, onClose }: BookingDetailsModalProps) {
+  const [showChat, setShowChat] = useState(false)
   const total = (booking.trip?.price_per_seat || 0) * booking.seats_booked
+  const driverName = booking.trip?.users?.full_name || 'your driver'
+  const isActive = booking.status === 'confirmed'
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
@@ -51,7 +61,31 @@ export function BookingDetailsModal({ booking, onClose }: BookingDetailsModalPro
             {booking.status}
           </span>
         </div>
+
+        {isActive && booking.trip && (
+          <>
+            <div className="mt-4">
+              <LiveLocationMap driverId={booking.trip.driver_id} driverName={driverName} />
+            </div>
+
+            <button
+              onClick={() => setShowChat(true)}
+              className="mt-4 w-full bg-blue-50 text-blue-700 py-2 rounded-lg hover:bg-blue-100 transition-colors text-sm font-medium"
+            >
+              💬 Message {driverName}
+            </button>
+          </>
+        )}
       </div>
+
+      {showChat && (
+        <ChatModal
+          bookingId={booking.id}
+          currentUserId={currentUserId}
+          otherPartyName={driverName}
+          onClose={() => setShowChat(false)}
+        />
+      )}
     </div>
   )
 }

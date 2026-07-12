@@ -5,6 +5,7 @@ import { supabase } from '../lib/supabase'
 import { useAuth } from '../hooks/useAuth'
 import { LoadingCar } from '../components/LoadingCar'
 import { TripDetailsModal } from '../components/TripDetailsModal'
+import { useDriverLocationBroadcast } from '../hooks/useDriverLocationBroadcast'
 
 const STATUS_STYLES: Record<string, string> = {
   scheduled: 'bg-blue-100 text-blue-800',
@@ -43,6 +44,8 @@ export default function DriverDashboard() {
   const [activeTab, setActiveTab] = useState<TabKey>('scheduled')
   const [detailsTripId, setDetailsTripId] = useState<string | null>(null)
   const [deletingId, setDeletingId] = useState<string | null>(null)
+
+  const { tracking, error: locationError, startTracking, stopTracking } = useDriverLocationBroadcast(user?.id)
 
   const { data: trips, isLoading } = useQuery({
     queryKey: ['driver-trips', user?.id],
@@ -114,12 +117,28 @@ export default function DriverDashboard() {
   return (
     <div className="min-h-screen bg-gray-100 p-4">
       <div className="max-w-5xl mx-auto">
-        <div className="flex justify-between items-center mb-6 mt-2">
+        <div className="flex justify-between items-center mb-6 mt-2 flex-wrap gap-3">
           <h1 className="text-2xl font-bold text-gray-800">My Trips</h1>
-          <Link to="/driver/create-trip" className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700">
-            + New Trip
-          </Link>
+          <div className="flex items-center gap-3">
+            <button
+              onClick={tracking ? stopTracking : startTracking}
+              className={`text-sm px-3 py-2 rounded-lg font-medium transition-colors ${
+                tracking
+                  ? 'bg-green-100 text-green-700 hover:bg-green-200'
+                  : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+              }`}
+            >
+              {tracking ? '🟢 Sharing location' : '📍 Share my location'}
+            </button>
+            <Link to="/driver/create-trip" className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700">
+              + New Trip
+            </Link>
+          </div>
         </div>
+
+        {locationError && (
+          <div className="mb-4 p-2 bg-red-50 text-red-600 text-sm rounded">{locationError}</div>
+        )}
 
         <div className="grid grid-cols-3 gap-4 mb-6">
           <div className="bg-white rounded-lg shadow p-4">
