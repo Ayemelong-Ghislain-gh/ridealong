@@ -41,8 +41,7 @@ export function BookingDetailsModal({ booking, currentUserId, onClose }: Booking
 
         <div className="space-y-2 text-sm">
           <p className="font-semibold text-gray-800 text-base">
-            {booking.trip?.park?.name ? `${booking.trip.park.name} → ` : ''}
-            {booking.trip?.route?.destination}
+            From {booking.trip?.park?.name || 'Unknown'} to {booking.trip?.route?.destination || 'Unknown'}
           </p>
           <p className="text-gray-600">
             {booking.trip?.departure_date} at {booking.trip?.departure_time?.slice(0, 5)}

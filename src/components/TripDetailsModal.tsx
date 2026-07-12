@@ -75,7 +75,7 @@ export function TripDetailsModal({ tripId, onClose }: TripDetailsModalProps) {
           <>
             <div className="space-y-1 text-sm mb-4">
               <p className="font-semibold text-gray-800 text-base">
-                {trip.park?.name} → {trip.route?.destination}
+                From {trip.park?.name || 'Unknown'} to {trip.route?.destination || 'Unknown'}
               </p>
               <p className="text-gray-600">
                 {trip.departure_date} at {trip.departure_time?.slice(0, 5)}

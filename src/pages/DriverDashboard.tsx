@@ -36,6 +36,7 @@ interface DriverTripRow {
   available_seats: number
   status: string
   route: { destination: string } | null
+  park: { name: string } | null
 }
 
 export default function DriverDashboard() {
@@ -56,7 +57,8 @@ export default function DriverDashboard() {
         .select(`
           id, departure_date, departure_time, price_per_seat,
           total_seats, available_seats, status,
-          route:routes!trips_route_id_fkey (destination)
+          route:routes!trips_route_id_fkey (destination),
+          park:taxi_parks!trips_park_id_fkey (name)
         `)
         .eq('driver_id', user!.id)
         .order('departure_datetime', { ascending: false })
@@ -191,7 +193,9 @@ export default function DriverDashboard() {
                   onClick={() => setDetailsTripId(trip.id)}
                   className="text-left flex-1 min-w-[180px] hover:opacity-80"
                 >
-                  <p className="font-semibold text-gray-800">{trip.route?.destination}</p>
+                  <p className="font-semibold text-gray-800">
+                    From {trip.park?.name || 'Unknown'} to {trip.route?.destination || 'Unknown'}
+                  </p>
                   <p className="text-sm text-gray-600">
                     {trip.departure_date} at {trip.departure_time?.slice(0, 5)}
                   </p>

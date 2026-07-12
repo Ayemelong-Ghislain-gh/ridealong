@@ -142,7 +142,9 @@ export default function PassengerBookings() {
               <div key={booking.id} className="bg-white rounded-lg shadow p-4">
                 <div className="flex justify-between items-start flex-wrap gap-3">
                   <button onClick={() => setDetailsBooking(booking)} className="text-left flex-1 min-w-[180px] hover:opacity-80">
-                    <p className="font-semibold text-gray-800">{booking.trip?.route?.destination}</p>
+                    <p className="font-semibold text-gray-800">
+                      From {booking.trip?.park?.name || 'Unknown'} to {booking.trip?.route?.destination || 'Unknown'}
+                    </p>
                     <p className="text-sm text-gray-600">
                       {booking.trip?.departure_date} at {booking.trip?.departure_time?.slice(0, 5)}
                     </p>

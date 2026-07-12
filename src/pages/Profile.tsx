@@ -62,7 +62,8 @@ export default function Profile() {
         .select(`
           id, departure_date, departure_time, status, price_per_seat,
           total_seats, available_seats,
-          route:routes!trips_route_id_fkey (destination)
+          route:routes!trips_route_id_fkey (destination),
+          park:taxi_parks!trips_park_id_fkey (name)
         `)
         .eq('driver_id', user.id)
         .order('departure_datetime', { ascending: false })
@@ -217,43 +218,41 @@ export default function Profile() {
     loadHistory()
   }
 
-  if (!profile) {
+  if (!user || !profile) {
     return <LoadingCar label="Loading profile..." />
   }
 
   return (
     <div className="min-h-screen bg-gray-100 p-4">
       <div className="max-w-2xl mx-auto space-y-6 mt-2">
-        {/* Avatar + basic info */}
         <div className="bg-white rounded-lg shadow p-6">
           <div className="flex items-center gap-4">
             <div className="relative">
               <div className="w-20 h-20 rounded-full bg-gray-200 overflow-hidden flex items-center justify-center text-2xl font-bold text-gray-500">
                 {avatarUrl ? (
-                  <img src={avatarUrl} alt="Profile" className="w-full h-full object-cover" />
+                  <img src={avatarUrl} alt="Avatar" className="w-full h-full object-cover" />
                 ) : (
-                  fullName.charAt(0).toUpperCase() || '?'
+                  (fullName || 'U')[0].toUpperCase()
                 )}
               </div>
               <button
                 onClick={() => fileInputRef.current?.click()}
                 disabled={uploading}
-                className="absolute -bottom-1 -right-1 bg-blue-600 text-white text-xs rounded-full w-7 h-7 flex items-center justify-center hover:bg-blue-700 disabled:opacity-50"
-                title="Change photo"
+                className="absolute bottom-0 right-0 bg-blue-600 text-white rounded-full w-7 h-7 flex items-center justify-center text-xs hover:bg-blue-700 disabled:opacity-50"
               >
-                {uploading ? '…' : '✎'}
+                {uploading ? '…' : '📷'}
               </button>
               <input
                 ref={fileInputRef}
                 type="file"
                 accept="image/*"
-                className="hidden"
                 onChange={handleAvatarUpload}
+                className="hidden"
               />
             </div>
             <div>
-              <p className="font-semibold text-gray-800">{fullName || 'Your name'}</p>
-              <p className="text-sm text-gray-600 capitalize">{role}</p>
+              <h1 className="text-xl font-bold text-gray-800">{fullName || 'Your Profile'}</h1>
+              <p className="text-sm text-gray-500 capitalize">{role}</p>
               {role === 'driver' && driverData?.is_verified_driver && (
                 <span className="inline-block mt-1 text-xs bg-green-100 text-green-800 px-2 py-0.5 rounded-full">
                   ✓ Verified Driver
@@ -417,6 +416,9 @@ export default function Profile() {
                   ? (item.status === 'completed' || item.status === 'cancelled') && bookedSeats === 0
                   : item.status === 'completed' || item.status === 'cancelled'
 
+              const parkName = role === 'driver' ? item.park?.name : item.trip?.park?.name
+              const destination = role === 'driver' ? item.route?.destination : item.trip?.route?.destination
+
               return (
                 <div
                   key={item.id}
@@ -427,7 +429,7 @@ export default function Profile() {
                     className="text-left hover:opacity-80"
                   >
                     <p className="font-medium text-gray-800">
-                      {role === 'driver' ? item.route?.destination : item.trip?.route?.destination}
+                      From {parkName || 'Unknown'} to {destination || 'Unknown'}
                     </p>
                     <p className="text-gray-500">
                       {role === 'driver'

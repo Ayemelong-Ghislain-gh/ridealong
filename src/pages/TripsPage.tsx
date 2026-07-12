@@ -186,12 +186,13 @@ export default function TripsPage() {
             return (
               <div key={trip.id} className="bg-white dark:bg-gray-800 rounded-lg shadow-md overflow-hidden">
                 <div className="p-6">
-                  <div className="flex justify-between items-start">
+                  <div className="flex justify-between items-start gap-3">
                     <div>
-                      <h3 className="text-lg font-semibold text-gray-800 dark:text-gray-100">
-                        {trip.route?.destination || 'Unknown'}
+                      <h3 className="text-base font-semibold text-gray-800 dark:text-gray-100 leading-snug">
+                        From <span className="text-gray-900 dark:text-gray-50">{trip.park?.name || 'Unknown'}</span>
+                        {' '}to{' '}
+                        <span className="text-blue-600 dark:text-blue-400">{trip.route?.destination || 'Unknown'}</span>
                       </h3>
-                      <p className="text-sm text-gray-600 dark:text-gray-400">{trip.park?.name}</p>
                     </div>
                     {seatsBadge(trip.available_seats)}
                   </div>
