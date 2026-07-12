@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { LoadingCar } from './LoadingCar'
+import { RouteLabel } from './RouteLabel'
 
 interface TripDetailsModalProps {
   tripId: string
@@ -74,10 +75,8 @@ export function TripDetailsModal({ tripId, onClose }: TripDetailsModalProps) {
         {!loading && trip && (
           <>
             <div className="space-y-1 text-sm mb-4">
-              <p className="font-semibold text-gray-800 text-base">
-                From {trip.park?.name || 'Unknown'} to {trip.route?.destination || 'Unknown'}
-              </p>
-              <p className="text-gray-600">
+              <RouteLabel from={trip.park?.name || 'Unknown'} to={trip.route?.destination || 'Unknown'} />
+              <p className="text-gray-600 pt-1">
                 {trip.departure_date} at {trip.departure_time?.slice(0, 5)}
               </p>
               <p className="text-gray-600">

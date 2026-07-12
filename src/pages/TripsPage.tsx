@@ -6,6 +6,8 @@ import { useAuth } from '../hooks/useAuth'
 import { Nav } from '../components/Nav'
 import { BookingModal } from '../components/BookingModal'
 import { LoadingCar } from '../components/LoadingCar'
+import { RouteLabel } from '../components/RouteLabel'
+import { BAMENDA_LOCATIONS } from '../lib/bamendaLocations'
 
 interface DriverProfileInfo {
   is_verified_driver: boolean
@@ -20,7 +22,8 @@ export default function TripsPage() {
   const [showBookingModal, setShowBookingModal] = useState(false)
 
   const [search, setSearch] = useState('')
-  const [park, setPark] = useState('')
+  const [fromFilter, setFromFilter] = useState('')
+  const [toFilter, setToFilter] = useState('')
   const [dateFrom, setDateFrom] = useState('')
   const [dateTo, setDateTo] = useState('')
 
@@ -84,9 +87,17 @@ export default function TripsPage() {
     },
   })
 
-  const parkOptions = useMemo(() => {
-    const names = new Set((trips || []).map((t: any) => t.park?.name).filter(Boolean))
-    return Array.from(names) as string[]
+  // Combine every known Bamenda location with whatever's actually showing up
+  // in live trips, so the filters are useful even before lots of trips exist,
+  // but still surface any custom/typed-in locations drivers have added.
+  const allLocationOptions = useMemo(() => {
+    const fromTrips = new Set<string>()
+    ;(trips || []).forEach((t: any) => {
+      if (t.park?.name) fromTrips.add(t.park.name)
+      if (t.route?.destination) fromTrips.add(t.route.destination)
+    })
+    const combined = new Set([...BAMENDA_LOCATIONS, ...fromTrips])
+    return Array.from(combined).sort((a, b) => a.localeCompare(b))
   }, [trips])
 
   const filteredTrips = useMemo(() => {
@@ -99,12 +110,13 @@ export default function TripsPage() {
         const parkMatch = trip.park?.name?.toLowerCase().includes(term)
         if (!destMatch && !parkMatch) return false
       }
-      if (park && trip.park?.name !== park) return false
+      if (fromFilter && trip.park?.name !== fromFilter) return false
+      if (toFilter && trip.route?.destination !== toFilter) return false
       if (dateFrom && trip.departure_date < dateFrom) return false
       if (dateTo && trip.departure_date > dateTo) return false
       return true
     })
-  }, [trips, search, park, dateFrom, dateTo])
+  }, [trips, search, fromFilter, toFilter, dateFrom, dateTo])
 
   const handleBookingComplete = async () => {
     await queryClient.invalidateQueries({ queryKey: ['trips'] })
@@ -136,27 +148,39 @@ export default function TripsPage() {
       <main className="max-w-7xl mx-auto px-4 py-8 sm:px-6 lg:px-8">
         <h2 className="text-xl font-semibold text-gray-800 dark:text-gray-100 mb-6">Available Trips</h2>
 
-        <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-4 mb-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-4 mb-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
           <input
             type="text"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Search destination or park..."
-            className="px-3 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm lg:col-span-2"
+            className="px-3 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm sm:col-span-2 lg:col-span-1"
           />
           <select
-            value={park}
-            onChange={(e) => setPark(e.target.value)}
+            value={fromFilter}
+            onChange={(e) => setFromFilter(e.target.value)}
             className="px-3 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
           >
-            <option value="">All parks</option>
-            {parkOptions.map((name) => (
+            <option value="">All departure points</option>
+            {allLocationOptions.map((name) => (
               <option key={name} value={name}>
                 {name}
               </option>
             ))}
           </select>
-          <div className="grid grid-cols-2 gap-2">
+          <select
+            value={toFilter}
+            onChange={(e) => setToFilter(e.target.value)}
+            className="px-3 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+          >
+            <option value="">All destinations</option>
+            {allLocationOptions.map((name) => (
+              <option key={name} value={name}>
+                {name}
+              </option>
+            ))}
+          </select>
+          <div className="grid grid-cols-2 gap-2 sm:col-span-2 lg:col-span-2">
             <input
               type="date"
               value={dateFrom}
@@ -187,13 +211,7 @@ export default function TripsPage() {
               <div key={trip.id} className="bg-white dark:bg-gray-800 rounded-lg shadow-md overflow-hidden">
                 <div className="p-6">
                   <div className="flex justify-between items-start gap-3">
-                    <div>
-                      <h3 className="text-base font-semibold text-gray-800 dark:text-gray-100 leading-snug">
-                        From <span className="text-gray-900 dark:text-gray-50">{trip.park?.name || 'Unknown'}</span>
-                        {' '}to{' '}
-                        <span className="text-blue-600 dark:text-blue-400">{trip.route?.destination || 'Unknown'}</span>
-                      </h3>
-                    </div>
+                    <RouteLabel from={trip.park?.name || 'Unknown'} to={trip.route?.destination || 'Unknown'} />
                     {seatsBadge(trip.available_seats)}
                   </div>
 

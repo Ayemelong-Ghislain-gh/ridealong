@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { ChatModal } from './ChatModal'
 import { LiveLocationMap } from './LiveLocationMap'
+import { RouteLabel } from './RouteLabel'
 
 interface BookingDetailsModalProps {
   booking: {
@@ -40,10 +41,8 @@ export function BookingDetailsModal({ booking, currentUserId, onClose }: Booking
         </div>
 
         <div className="space-y-2 text-sm">
-          <p className="font-semibold text-gray-800 text-base">
-            From {booking.trip?.park?.name || 'Unknown'} to {booking.trip?.route?.destination || 'Unknown'}
-          </p>
-          <p className="text-gray-600">
+          <RouteLabel from={booking.trip?.park?.name || 'Unknown'} to={booking.trip?.route?.destination || 'Unknown'} />
+          <p className="text-gray-600 pt-1">
             {booking.trip?.departure_date} at {booking.trip?.departure_time?.slice(0, 5)}
           </p>
           {booking.trip?.users?.full_name && (

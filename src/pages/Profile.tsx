@@ -4,6 +4,7 @@ import { useAuth } from '../hooks/useAuth'
 import { LoadingCar } from '../components/LoadingCar'
 import { TripDetailsModal } from '../components/TripDetailsModal'
 import { BookingDetailsModal } from '../components/BookingDetailsModal'
+import { RouteLabel } from '../components/RouteLabel'
 
 interface DriverProfileData {
   vehicle_make: string
@@ -408,7 +409,7 @@ export default function Profile() {
             <p className="text-sm text-gray-500">Nothing here yet.</p>
           )}
 
-          <div className="space-y-2">
+          <div className="space-y-3">
             {history.map((item) => {
               const bookedSeats = role === 'driver' ? item.total_seats - item.available_seats : 0
               const canRemove =
@@ -422,16 +423,14 @@ export default function Profile() {
               return (
                 <div
                   key={item.id}
-                  className="flex justify-between items-center text-sm border-b border-gray-100 pb-2"
+                  className="flex justify-between items-center text-sm border-b border-gray-100 pb-3"
                 >
                   <button
                     onClick={() => (role === 'driver' ? setDetailsTripId(item.id) : setDetailsBooking(item))}
                     className="text-left hover:opacity-80"
                   >
-                    <p className="font-medium text-gray-800">
-                      From {parkName || 'Unknown'} to {destination || 'Unknown'}
-                    </p>
-                    <p className="text-gray-500">
+                    <RouteLabel from={parkName || 'Unknown'} to={destination || 'Unknown'} size="sm" />
+                    <p className="text-gray-500 mt-1.5">
                       {role === 'driver'
                         ? `${item.departure_date} at ${item.departure_time?.slice(0, 5)}`
                         : `${item.trip?.departure_date} at ${item.trip?.departure_time?.slice(0, 5)} · Ref: ${item.booking_reference}`}

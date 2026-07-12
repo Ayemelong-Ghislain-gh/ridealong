@@ -5,6 +5,7 @@ import { supabase } from '../lib/supabase'
 import { useAuth } from '../hooks/useAuth'
 import { LoadingCar } from '../components/LoadingCar'
 import { TripDetailsModal } from '../components/TripDetailsModal'
+import { RouteLabel } from '../components/RouteLabel'
 import { useDriverLocationBroadcast } from '../hooks/useDriverLocationBroadcast'
 
 const STATUS_STYLES: Record<string, string> = {
@@ -193,10 +194,8 @@ export default function DriverDashboard() {
                   onClick={() => setDetailsTripId(trip.id)}
                   className="text-left flex-1 min-w-[180px] hover:opacity-80"
                 >
-                  <p className="font-semibold text-gray-800">
-                    From {trip.park?.name || 'Unknown'} to {trip.route?.destination || 'Unknown'}
-                  </p>
-                  <p className="text-sm text-gray-600">
+                  <RouteLabel from={trip.park?.name || 'Unknown'} to={trip.route?.destination || 'Unknown'} size="sm" />
+                  <p className="text-sm text-gray-600 mt-1.5">
                     {trip.departure_date} at {trip.departure_time?.slice(0, 5)}
                   </p>
                   <p className="text-sm text-gray-600">

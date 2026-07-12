@@ -5,6 +5,7 @@ import { useAuth } from '../hooks/useAuth'
 import { LoadingCar } from '../components/LoadingCar'
 import { BookingDetailsModal } from '../components/BookingDetailsModal'
 import { ReviewModal } from '../components/ReviewModal'
+import { RouteLabel } from '../components/RouteLabel'
 
 const STATUS_STYLES: Record<string, string> = {
   confirmed: 'bg-blue-100 text-blue-800',
@@ -142,10 +143,12 @@ export default function PassengerBookings() {
               <div key={booking.id} className="bg-white rounded-lg shadow p-4">
                 <div className="flex justify-between items-start flex-wrap gap-3">
                   <button onClick={() => setDetailsBooking(booking)} className="text-left flex-1 min-w-[180px] hover:opacity-80">
-                    <p className="font-semibold text-gray-800">
-                      From {booking.trip?.park?.name || 'Unknown'} to {booking.trip?.route?.destination || 'Unknown'}
-                    </p>
-                    <p className="text-sm text-gray-600">
+                    <RouteLabel
+                      from={booking.trip?.park?.name || 'Unknown'}
+                      to={booking.trip?.route?.destination || 'Unknown'}
+                      size="sm"
+                    />
+                    <p className="text-sm text-gray-600 mt-1.5">
                       {booking.trip?.departure_date} at {booking.trip?.departure_time?.slice(0, 5)}
                     </p>
                     <p className="text-sm text-gray-600">Ref: {booking.booking_reference}</p>
