@@ -459,7 +459,13 @@ export default function Profile() {
       </div>
 
       {detailsTripId && <TripDetailsModal tripId={detailsTripId} onClose={() => setDetailsTripId(null)} />}
-      {detailsBooking && <BookingDetailsModal booking={detailsBooking} onClose={() => setDetailsBooking(null)} />}
+      {detailsBooking && (
+        <BookingDetailsModal
+          booking={detailsBooking}
+          currentUserId={user!.id}
+          onClose={() => setDetailsBooking(null)}
+        />
+      )}
     </div>
   )
 }
