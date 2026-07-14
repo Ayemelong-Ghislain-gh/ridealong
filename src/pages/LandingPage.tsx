@@ -110,7 +110,17 @@ export default function LandingPage() {
     <div className="flex flex-wrap items-center justify-center gap-2">
       <span>Version 1.0</span>
       <span className="hidden sm:inline text-gray-300 dark:text-gray-700">|</span>
-      <span>A Product by <b className="text-blue-600 dark:text-blue-400">AsghinLabs</b></span>
+      <span>
+  A Product by 
+  <a 
+    href="https://asghinlabs.vercel.app/" 
+    target="_blank" 
+    rel="noopener noreferrer"
+    class="text-blue-600 dark:text-blue-400 hover:underline"
+  >
+    AsghinLabs
+  </a>
+</span>
     </div>
   </div>
 </footer>
