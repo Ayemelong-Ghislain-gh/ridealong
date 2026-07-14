@@ -111,12 +111,12 @@ export default function LandingPage() {
       <span>Version 1.0</span>
       <span className="hidden sm:inline text-gray-300 dark:text-gray-700">|</span>
       <span>
-  A Product by 
+  A Product by{' '}
   <a 
     href="https://asghinlabs.vercel.app/" 
     target="_blank" 
     rel="noopener noreferrer"
-    class="text-blue-600 dark:text-blue-400 hover:underline"
+    className="text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300 hover:underline transition-all duration-200 font-medium"
   >
     AsghinLabs
   </a>
