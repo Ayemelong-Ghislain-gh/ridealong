@@ -10,7 +10,13 @@ lerna-debug.log*
 node_modules
 dist
 dist-ssr
+dev-dist
 *.local
+
+# Environment variables (keep keys out of GitHub)
+.env
+.env.*
+!.env.example
 
 # Editor directories and files
 .vscode/*

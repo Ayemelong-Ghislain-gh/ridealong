@@ -1,285 +1,247 @@
-import { useState, useMemo } from 'react'
-import { Navigate } from 'react-router-dom'
+import { useMemo, useState } from 'react'
+import { Navigate, useNavigate } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../hooks/useAuth'
-import { Nav } from '../components/Nav'
+import { useDriverProfiles } from '../hooks/useDriverProfiles'
+import { useFeedback } from '../context/FeedbackContext'
+import { PageContainer } from '../components/AppLayout'
 import { BookingModal } from '../components/BookingModal'
-import { LoadingCar } from '../components/LoadingCar'
-import { RouteLabel } from '../components/RouteLabel'
-import { BAMENDA_LOCATIONS } from '../lib/bamendaLocations'
+import { DriverProfileModal } from '../components/DriverProfileModal'
+import { TripCard } from '../components/TripCard'
+import { Button } from '../components/ui/Button'
+import { controlClasses } from '../components/ui/Field'
+import { EmptyState, PageHeader, Skeleton } from '../components/ui/Display'
+import { isPastDeparture, todayISODate } from '../lib/format'
+import { TRIP_LIST_SELECT } from '../types/rows'
+import type { TripListRow } from '../types/rows'
 
-interface DriverProfileInfo {
-  is_verified_driver: boolean
-  rating: number
-  vehicle_make: string | null
-  vehicle_model: string | null
+type DateFilter = 'any' | 'today' | 'tomorrow' | 'pick'
+
+function addDays(iso: string, days: number) {
+  const [y, m, d] = iso.split('-').map(Number)
+  const dt = new Date(y, m - 1, d + days)
+  return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`
 }
 
 export default function TripsPage() {
   const { user, role, loading: authLoading } = useAuth()
-  const [selectedTrip, setSelectedTrip] = useState<any>(null)
-  const [showBookingModal, setShowBookingModal] = useState(false)
-
-  const [search, setSearch] = useState('')
-  const [fromFilter, setFromFilter] = useState('')
-  const [toFilter, setToFilter] = useState('')
-  const [dateFrom, setDateFrom] = useState('')
-  const [dateTo, setDateTo] = useState('')
-
+  const { toast } = useFeedback()
+  const navigate = useNavigate()
   const queryClient = useQueryClient()
 
-  const { data: trips, isLoading } = useQuery({
+  const [bookingTrip, setBookingTrip] = useState<TripListRow | null>(null)
+  const [driverId, setDriverId] = useState<string | null>(null)
+  const [fromFilter, setFromFilter] = useState('')
+  const [toFilter, setToFilter] = useState('')
+  const [dateFilter, setDateFilter] = useState<DateFilter>('any')
+  const [pickedDate, setPickedDate] = useState('')
+
+  const { data: trips, isLoading, isError, refetch } = useQuery({
     queryKey: ['trips'],
     enabled: role !== 'driver',
     queryFn: async () => {
       const { data, error } = await supabase
         .from('trips')
-        .select(`
-          id,
-          departure_date,
-          departure_time,
-          price_per_seat,
-          available_seats,
-          status,
-          driver_id,
-          users!trips_driver_id_fkey (
-            full_name,
-            id
-          ),
-          route:routes!trips_route_id_fkey (
-            destination
-          ),
-          park:taxi_parks!trips_park_id_fkey (
-            name,
-            city
-          )
-        `)
+        .select(TRIP_LIST_SELECT)
         .eq('status', 'scheduled')
         .gt('available_seats', 0)
+        .gte('departure_date', todayISODate())
         .order('departure_datetime', { ascending: true })
 
       if (error) throw error
-      return data || []
+      // Also drop trips whose departure time already passed today
+      return ((data || []) as unknown as TripListRow[]).filter((t) => !isPastDeparture(t.departure_date, t.departure_time))
     },
   })
 
-  const driverIds = useMemo(() => {
-    const ids = new Set((trips || []).map((t: any) => t.driver_id))
-    return Array.from(ids)
-  }, [trips])
+  const { data: driverProfiles } = useDriverProfiles((trips || []).map((t) => t.driver_id))
 
-  const { data: driverProfiles } = useQuery({
-    queryKey: ['trip-driver-profiles', driverIds],
-    enabled: driverIds.length > 0,
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from('driver_profiles')
-        .select('id, is_verified_driver, rating, vehicle_make, vehicle_model')
-        .in('id', driverIds)
-
-      if (error) throw error
-      const map: Record<string, DriverProfileInfo> = {}
-      for (const row of data || []) {
-        map[row.id] = row
-      }
-      return map
-    },
-  })
-
-  // Combine every known Bamenda location with whatever's actually showing up
-  // in live trips, so the filters are useful even before lots of trips exist,
-  // but still surface any custom/typed-in locations drivers have added.
-  const allLocationOptions = useMemo(() => {
-    const fromTrips = new Set<string>()
-    ;(trips || []).forEach((t: any) => {
-      if (t.park?.name) fromTrips.add(t.park.name)
-      if (t.route?.destination) fromTrips.add(t.route.destination)
-    })
-    const combined = new Set([...BAMENDA_LOCATIONS, ...fromTrips])
-    return Array.from(combined).sort((a, b) => a.localeCompare(b))
+  // Only offer places that actually have trips, so no filter leads to an empty list
+  const { fromOptions, toOptions } = useMemo(() => {
+    const from = new Set<string>()
+    const to = new Set<string>()
+    for (const t of trips || []) {
+      if (t.park?.name) from.add(t.park.name)
+      if (t.route?.destination) to.add(t.route.destination)
+    }
+    const sort = (s: Set<string>) => [...s].sort((a, b) => a.localeCompare(b))
+    return { fromOptions: sort(from), toOptions: sort(to) }
   }, [trips])
 
   const filteredTrips = useMemo(() => {
-    if (!trips) return []
-    const term = search.trim().toLowerCase()
+    const today = todayISODate()
+    const wantedDate =
+      dateFilter === 'today' ? today : dateFilter === 'tomorrow' ? addDays(today, 1) : dateFilter === 'pick' ? pickedDate : ''
 
-    return trips.filter((trip: any) => {
-      if (term) {
-        const destMatch = trip.route?.destination?.toLowerCase().includes(term)
-        const parkMatch = trip.park?.name?.toLowerCase().includes(term)
-        if (!destMatch && !parkMatch) return false
-      }
+    return (trips || []).filter((trip) => {
       if (fromFilter && trip.park?.name !== fromFilter) return false
       if (toFilter && trip.route?.destination !== toFilter) return false
-      if (dateFrom && trip.departure_date < dateFrom) return false
-      if (dateTo && trip.departure_date > dateTo) return false
+      if (wantedDate && trip.departure_date !== wantedDate) return false
       return true
     })
-  }, [trips, search, fromFilter, toFilter, dateFrom, dateTo])
+  }, [trips, fromFilter, toFilter, dateFilter, pickedDate])
 
-  const handleBookingComplete = async () => {
+  const hasFilters = !!(fromFilter || toFilter || dateFilter !== 'any')
+
+  if (!authLoading && role === 'driver') return <Navigate to="/driver/dashboard" replace />
+
+  const startBooking = (trip: TripListRow) => {
+    if (!user) {
+      toast('Sign in to book your seat.', 'info')
+      navigate('/login', { state: { from: '/trips' } })
+      return
+    }
+    if (role === 'admin') {
+      toast('Admin accounts can’t book seats.', 'info')
+      return
+    }
+    setBookingTrip(trip)
+  }
+
+  const handleBookingComplete = async (reference: string | null) => {
+    setBookingTrip(null)
+    toast(reference ? `Seat booked. Your reference is ${reference}.` : 'Seat booked.')
     await queryClient.invalidateQueries({ queryKey: ['trips'] })
-    setShowBookingModal(false)
+    await queryClient.invalidateQueries({ queryKey: ['my-bookings'] })
+    navigate('/passenger/bookings')
   }
 
-  if (!authLoading && role === 'driver') {
-    return <Navigate to="/driver/dashboard" replace />
-  }
-
-  const seatsBadge = (availableSeats: number) => {
-    if (availableSeats <= 1) {
-      return <span className="text-xs bg-red-100 text-red-800 px-2 py-1 rounded-full">Almost Full</span>
-    }
-    if (availableSeats === 2) {
-      return <span className="text-xs bg-amber-100 text-amber-800 px-2 py-1 rounded-full">Filling Fast</span>
-    }
-    return (
-      <span className="text-xs bg-green-100 text-green-800 px-2 py-1 rounded-full">
-        {availableSeats} seats left
-      </span>
-    )
-  }
+  const chip = (value: DateFilter, label: string) => (
+    <button
+      type="button"
+      onClick={() => setDateFilter(value)}
+      aria-pressed={dateFilter === value}
+      className={`h-9 shrink-0 rounded-full px-4 text-sm font-semibold transition-colors ${
+        dateFilter === value ? 'bg-ink text-white' : 'border border-line bg-card text-ink hover:border-ink/30'
+      }`}
+    >
+      {label}
+    </button>
+  )
 
   return (
-    <div className="min-h-screen bg-gray-100 dark:bg-gray-900">
-      <Nav />
+    <PageContainer>
+      <PageHeader title="Find a trip" subtitle="Upcoming departures with seats still free." />
 
-      <main className="max-w-7xl mx-auto px-4 py-8 sm:px-6 lg:px-8">
-        <h2 className="text-xl font-semibold text-gray-800 dark:text-gray-100 mb-6">Available Trips</h2>
-
-        <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-4 mb-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+      <div className="mb-6 space-y-3">
+        <div className="grid grid-cols-2 gap-3 md:max-w-xl">
+          <select value={fromFilter} onChange={(e) => setFromFilter(e.target.value)} aria-label="Leaving from" className={`${controlClasses} h-11`}>
+            <option value="">Leaving from anywhere</option>
+            {fromOptions.map((name) => (
+              <option key={name} value={name}>
+                {name}
+              </option>
+            ))}
+          </select>
+          <select value={toFilter} onChange={(e) => setToFilter(e.target.value)} aria-label="Going to" className={`${controlClasses} h-11`}>
+            <option value="">Going anywhere</option>
+            {toOptions.map((name) => (
+              <option key={name} value={name}>
+                {name}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="-mx-4 flex items-center gap-2 overflow-x-auto px-4 pb-1 sm:mx-0 sm:px-0">
+          {chip('any', 'Any day')}
+          {chip('today', 'Today')}
+          {chip('tomorrow', 'Tomorrow')}
           <input
-            type="text"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search destination or park..."
-            className="px-3 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm sm:col-span-2 lg:col-span-1"
+            type="date"
+            aria-label="Pick a date"
+            min={todayISODate()}
+            value={pickedDate}
+            onChange={(e) => {
+              setPickedDate(e.target.value)
+              setDateFilter(e.target.value ? 'pick' : 'any')
+            }}
+            className={`h-9 shrink-0 rounded-full border px-3 text-sm font-semibold ${
+              dateFilter === 'pick' ? 'border-ink bg-ink text-white' : 'border-line bg-card text-ink'
+            }`}
           />
-          <select
-            value={fromFilter}
-            onChange={(e) => setFromFilter(e.target.value)}
-            className="px-3 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
-          >
-            <option value="">All departure points</option>
-            {allLocationOptions.map((name) => (
-              <option key={name} value={name}>
-                {name}
-              </option>
-            ))}
-          </select>
-          <select
-            value={toFilter}
-            onChange={(e) => setToFilter(e.target.value)}
-            className="px-3 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
-          >
-            <option value="">All destinations</option>
-            {allLocationOptions.map((name) => (
-              <option key={name} value={name}>
-                {name}
-              </option>
-            ))}
-          </select>
-          <div className="grid grid-cols-2 gap-2 sm:col-span-2 lg:col-span-2">
-            <input
-              type="date"
-              value={dateFrom}
-              onChange={(e) => setDateFrom(e.target.value)}
-              className="px-2 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
-            />
-            <input
-              type="date"
-              value={dateTo}
-              onChange={(e) => setDateTo(e.target.value)}
-              className="px-2 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
-            />
-          </div>
+          {hasFilters && (
+            <button
+              type="button"
+              onClick={() => {
+                setFromFilter('')
+                setToFilter('')
+                setDateFilter('any')
+                setPickedDate('')
+              }}
+              className="ml-1 shrink-0 text-sm font-semibold text-muted underline underline-offset-4 hover:text-ink"
+            >
+              Clear
+            </button>
+          )}
         </div>
+      </div>
 
-        {(authLoading || isLoading) && <LoadingCar label="Loading trips..." />}
-
-        {!authLoading && !isLoading && filteredTrips.length === 0 && (
-          <div className="text-center py-12 bg-white dark:bg-gray-800 rounded-lg shadow">
-            <p className="text-gray-600 dark:text-gray-300">No trips match your search.</p>
-          </div>
-        )}
-
-        <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
-          {filteredTrips.map((trip: any) => {
-            const driverInfo = driverProfiles?.[trip.driver_id]
-            return (
-              <div key={trip.id} className="bg-white dark:bg-gray-800 rounded-lg shadow-md overflow-hidden">
-                <div className="p-6">
-                  <div className="flex justify-between items-start gap-3">
-                    <RouteLabel from={trip.park?.name || 'Unknown'} to={trip.route?.destination || 'Unknown'} />
-                    {seatsBadge(trip.available_seats)}
-                  </div>
-
-                  <div className="mt-4 space-y-2">
-                    <div className="flex justify-between text-sm">
-                      <span className="text-gray-600 dark:text-gray-400">Departure:</span>
-                      <span className="dark:text-gray-200">
-                        {trip.departure_date} at {trip.departure_time?.slice(0, 5)}
-                      </span>
-                    </div>
-                    <div className="flex justify-between text-sm">
-                      <span className="text-gray-600 dark:text-gray-400">Price:</span>
-                      <span className="font-medium text-blue-600">
-                        {trip.price_per_seat.toLocaleString()} XAF
-                      </span>
-                    </div>
-                    <div className="flex justify-between items-center text-sm">
-                      <span className="text-gray-600 dark:text-gray-400">Driver:</span>
-                      <span className="flex items-center gap-1 dark:text-gray-200">
-                        {trip.users?.full_name || 'Unknown'}
-                        {driverInfo?.is_verified_driver && (
-                          <span title="Verified driver" className="text-blue-500">
-                            ✅
-                          </span>
-                        )}
-                      </span>
-                    </div>
-                    {driverInfo && driverInfo.rating > 0 && (
-                      <div className="flex justify-between text-sm">
-                        <span className="text-gray-600 dark:text-gray-400">Rating:</span>
-                        <span className="text-amber-500">★ {driverInfo.rating.toFixed(1)}</span>
-                      </div>
-                    )}
-                  </div>
-
-                  <button
-                    className="mt-4 w-full bg-blue-600 text-white py-2 rounded-lg hover:bg-blue-700 transition-colors"
-                    onClick={() => {
-                      if (!user) {
-                        alert('Please login first to book seats')
-                        return
-                      }
-                      setSelectedTrip(trip)
-                      setShowBookingModal(true)
-                    }}
-                  >
-                    Book Seat
-                  </button>
-                </div>
-              </div>
-            )
-          })}
+      {(authLoading || isLoading) && (
+        <div className="grid gap-4 md:grid-cols-2">
+          {[0, 1, 2, 3].map((i) => (
+            <Skeleton key={i} className="h-44" />
+          ))}
         </div>
-      </main>
+      )}
 
-      {showBookingModal && selectedTrip && user && (
-        <BookingModal
-          tripId={selectedTrip.id}
-          tripDestination={selectedTrip.route?.destination || 'Unknown'}
-          tripDate={selectedTrip.departure_date}
-          tripTime={selectedTrip.departure_time?.slice(0, 5) || '00:00'}
-          pricePerSeat={selectedTrip.price_per_seat}
-          availableSeats={selectedTrip.available_seats}
-          passengerId={user.id}
-          onClose={() => setShowBookingModal(false)}
-          onBookingComplete={handleBookingComplete}
+      {isError && (
+        <EmptyState
+          title="Couldn’t load trips"
+          message="Check your internet connection and try again."
+          action={<Button onClick={() => refetch()}>Try again</Button>}
         />
       )}
-    </div>
+
+      {!authLoading && !isLoading && !isError && filteredTrips.length === 0 && (
+        <EmptyState
+          title={hasFilters ? 'No trips match these filters' : 'No upcoming trips yet'}
+          message={hasFilters ? 'Try another day or place.' : 'Drivers post departures through the day. Check back soon.'}
+          action={
+            hasFilters ? (
+              <Button
+                variant="secondary"
+                onClick={() => {
+                  setFromFilter('')
+                  setToFilter('')
+                  setDateFilter('any')
+                  setPickedDate('')
+                }}
+              >
+                Show all trips
+              </Button>
+            ) : undefined
+          }
+        />
+      )}
+
+      {filteredTrips.length > 0 && (
+        <>
+          <p className="mb-3 text-sm text-muted" aria-live="polite">
+            {filteredTrips.length} {filteredTrips.length === 1 ? 'trip' : 'trips'}
+          </p>
+          <div className="grid gap-4 md:grid-cols-2">
+            {filteredTrips.map((trip) => (
+              <TripCard
+                key={trip.id}
+                trip={trip}
+                driverInfo={driverProfiles?.[trip.driver_id]}
+                onDriverClick={() => setDriverId(trip.driver_id)}
+                action={
+                  <Button size="sm" onClick={() => startBooking(trip)} className="px-5">
+                    Book seat
+                  </Button>
+                }
+              />
+            ))}
+          </div>
+        </>
+      )}
+
+      {bookingTrip && user && (
+        <BookingModal trip={bookingTrip} passengerId={user.id} onClose={() => setBookingTrip(null)} onBookingComplete={handleBookingComplete} />
+      )}
+      {driverId && <DriverProfileModal driverId={driverId} onClose={() => setDriverId(null)} />}
+    </PageContainer>
   )
 }

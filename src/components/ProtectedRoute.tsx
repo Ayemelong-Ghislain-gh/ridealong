@@ -1,6 +1,7 @@
-import { Navigate } from 'react-router-dom'
+import { Navigate, useLocation } from 'react-router-dom'
 import type { ReactNode } from 'react'
 import { useAuth } from '../hooks/useAuth'
+import { LoadingCar } from './LoadingCar'
 
 interface ProtectedRouteProps {
   children: ReactNode
@@ -8,23 +9,19 @@ interface ProtectedRouteProps {
 }
 
 export function ProtectedRoute({ children, requiredRole }: ProtectedRouteProps) {
-  const { user, role, loading } = useAuth()
+  const { user, role, loading, homePath } = useAuth()
+  const location = useLocation()
 
-  if (loading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-100">
-        <p className="text-gray-600">Loading...</p>
-      </div>
-    )
-  }
+  if (loading) return <LoadingCar label="Loading..." />
 
   if (!user) {
-    return <Navigate to="/login" replace />
+    // Remember where they were going so login can send them back
+    return <Navigate to="/login" replace state={{ from: location.pathname + location.search }} />
   }
 
-  // Admins can access any role-protected route
+  // Admins can open any role-protected page
   if (requiredRole && role !== requiredRole && role !== 'admin') {
-    return <Navigate to="/" replace />
+    return <Navigate to={homePath} replace />
   }
 
   return <>{children}</>

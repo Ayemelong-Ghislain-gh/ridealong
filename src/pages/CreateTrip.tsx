@@ -1,42 +1,57 @@
-import { useState, useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { useForm, Controller } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import { useNavigate } from 'react-router-dom'
+import { useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../hooks/useAuth'
-import { PriceStepper } from '../components/PriceStepper'
+import { useFeedback } from '../context/FeedbackContext'
+import { PageContainer } from '../components/AppLayout'
+import { PriceStepper, Stepper } from '../components/PriceStepper'
 import { LoadingCar } from '../components/LoadingCar'
+import { Button } from '../components/ui/Button'
+import { FieldShell, Input, Notice, Select, Textarea } from '../components/ui/Field'
+import { PageHeader } from '../components/ui/Display'
 import { BAMENDA_LOCATIONS } from '../lib/bamendaLocations'
+import { escapeLike, todayISODate, tripDeparture } from '../lib/format'
+import { getErrorMessage } from '../lib/errors'
 
 const OTHER_PARK = '__other__'
 
-const tripSchema = z.object({
-  parkId: z.string().min(1, 'Select a departure point'),
-  customParkName: z.string().optional(),
-  destination: z.string().min(2, 'Destination is required'),
-  departureDate: z.string().min(1, 'Select a date'),
-  departureTime: z.string().min(1, 'Select a time'),
-  pricePerSeat: z.number().min(100, 'Enter a valid price'),
-  totalSeats: z.number().min(4, 'Minimum 4 seats').max(30, 'Maximum 30 seats'),
-  notes: z.string().optional(),
-}).superRefine((data, ctx) => {
-  if (data.parkId === OTHER_PARK && !data.customParkName?.trim()) {
-    ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Enter the departure point name', path: ['customParkName'] })
-  }
-})
+const tripSchema = z
+  .object({
+    parkId: z.string().min(1, 'Choose where you leave from'),
+    customParkName: z.string().optional(),
+    destination: z.string().trim().min(2, 'Enter where you’re going'),
+    departureDate: z.string().min(1, 'Choose a date'),
+    departureTime: z.string().min(1, 'Choose a time'),
+    pricePerSeat: z.number().min(100, 'Price must be at least 100 XAF'),
+    totalSeats: z.number().int().min(1, 'At least 1 seat').max(30, 'At most 30 seats'),
+    notes: z.string().max(300, 'Keep notes under 300 characters').optional(),
+  })
+  .superRefine((data, ctx) => {
+    if (data.parkId === OTHER_PARK && !data.customParkName?.trim()) {
+      ctx.addIssue({ code: 'custom', message: 'Enter the name of the departure point', path: ['customParkName'] })
+    }
+    const dep = tripDeparture(data.departureDate, data.departureTime)
+    if (dep && dep.getTime() < Date.now()) {
+      ctx.addIssue({ code: 'custom', message: 'This time has already passed', path: ['departureTime'] })
+    }
+  })
 
 type TripForm = z.infer<typeof tripSchema>
 
 interface Park {
   id: string
   name: string
-  city: string
 }
 
 export default function CreateTrip() {
   const navigate = useNavigate()
+  const queryClient = useQueryClient()
   const { user } = useAuth()
+  const { toast } = useFeedback()
   const [parks, setParks] = useState<Park[]>([])
   const [loadingParks, setLoadingParks] = useState(true)
   const [serverError, setServerError] = useState('')
@@ -47,26 +62,29 @@ export default function CreateTrip() {
     handleSubmit,
     watch,
     control,
+    setValue,
     formState: { errors },
   } = useForm<TripForm>({
     resolver: zodResolver(tripSchema),
-    defaultValues: { pricePerSeat: 500, totalSeats: 4 },
+    defaultValues: { pricePerSeat: 500, totalSeats: 4, departureDate: todayISODate() },
   })
 
   const selectedPark = watch('parkId')
 
   useEffect(() => {
-    supabase
-      .from('taxi_parks')
-      .select('id, name, city')
-      .eq('is_active', true)
-      .eq('city', 'Bamenda')
-      .then(({ data, error }) => {
-        if (error) console.error('Failed to load parks:', error)
-        setParks(data || [])
-        setLoadingParks(false)
-      })
-  }, [])
+    if (!user) return
+    // Departure points, plus the driver's vehicle size to pre-fill seats
+    Promise.all([
+      supabase.from('taxi_parks').select('id, name').eq('is_active', true).eq('city', 'Bamenda').order('name'),
+      supabase.from('driver_profiles').select('vehicle_capacity').eq('id', user.id).maybeSingle(),
+    ]).then(([parksRes, driverRes]) => {
+      if (parksRes.error) setServerError('Couldn’t load departure points. Refresh to try again.')
+      setParks((parksRes.data || []) as unknown as Park[])
+      const capacity = (driverRes.data as unknown as { vehicle_capacity?: number } | null)?.vehicle_capacity
+      if (capacity && capacity > 0) setValue('totalSeats', Math.min(30, capacity))
+      setLoadingParks(false)
+    })
+  }, [user, setValue])
 
   const onSubmit = async (data: TripForm) => {
     if (!user) return
@@ -76,48 +94,61 @@ export default function CreateTrip() {
     try {
       let parkId = data.parkId
 
-      // Create a new park if the driver typed a custom departure point
+      // Typed-in departure point: reuse an existing park with the same name before creating one
       if (parkId === OTHER_PARK) {
-        const { data: newPark, error: parkError } = await supabase
+        const name = data.customParkName!.trim()
+        const { data: existing } = await supabase
           .from('taxi_parks')
-          .insert([{
-            name: data.customParkName!.trim(),
-            city: 'Bamenda',
-            region: 'North West',
-            // Approximate central Bamenda coordinates — placeholder until
-            // an admin/driver can pin the exact location later.
-            latitude: 5.9631,
-            longitude: 10.1591,
-            is_active: true,
-          }])
           .select('id')
-          .single()
+          .eq('city', 'Bamenda')
+          .ilike('name', escapeLike(name))
+          .limit(1)
+          .maybeSingle()
 
-        if (parkError) throw parkError
-        parkId = newPark.id
+        if (existing) {
+          parkId = (existing as unknown as { id: string }).id
+        } else {
+          const { data: newPark, error: parkError } = await supabase
+            .from('taxi_parks')
+            .insert([
+              {
+                name,
+                city: 'Bamenda',
+                region: 'North West',
+                // Central Bamenda until an admin pins the exact spot
+                latitude: 5.9631,
+                longitude: 10.1591,
+                is_active: true,
+              },
+            ])
+            .select('id')
+            .single()
+          if (parkError) throw parkError
+          parkId = (newPark as unknown as { id: string }).id
+        }
       }
 
-      // Find an existing route for this park + destination, or create one
-      let routeId: string
-
+      // Reuse the route for this park + destination, or create it
+      const destination = data.destination.trim()
       const { data: existingRoute } = await supabase
         .from('routes')
         .select('id')
         .eq('park_id', parkId)
-        .ilike('destination', data.destination.trim())
+        .ilike('destination', escapeLike(destination))
+        .limit(1)
         .maybeSingle()
 
+      let routeId: string
       if (existingRoute) {
-        routeId = existingRoute.id
+        routeId = (existingRoute as unknown as { id: string }).id
       } else {
         const { data: newRoute, error: routeError } = await supabase
           .from('routes')
-          .insert([{ park_id: parkId, destination: data.destination.trim(), is_active: true }])
+          .insert([{ park_id: parkId, destination, is_active: true }])
           .select('id')
           .single()
-
         if (routeError) throw routeError
-        routeId = newRoute.id
+        routeId = (newRoute as unknown as { id: string }).id
       }
 
       const { error: tripError } = await supabase.from('trips').insert([
@@ -130,149 +161,112 @@ export default function CreateTrip() {
           price_per_seat: data.pricePerSeat,
           total_seats: data.totalSeats,
           available_seats: data.totalSeats,
-          notes: data.notes || null,
+          notes: data.notes?.trim() || null,
           status: 'scheduled',
         },
       ])
-
       if (tripError) throw tripError
 
+      await queryClient.invalidateQueries({ queryKey: ['driver-trips', user.id] })
+      toast('Trip posted. Passengers can book it now.')
       navigate('/driver/dashboard')
-    } catch (err: any) {
-      console.error('Create trip error:', err)
-      const message =
-        err?.message || err?.error_description || err?.details || (typeof err === 'string' ? err : null) || 'Failed to create trip'
-      setServerError(message)
+    } catch (err) {
+      setServerError(getErrorMessage(err, 'Trip not posted. Try again.'))
     } finally {
       setSubmitting(false)
     }
   }
 
   return (
-    <div className="min-h-screen bg-gray-100 p-4">
-      <div className="max-w-lg mx-auto bg-white rounded-lg shadow-xl p-6 mt-6">
-        <h1 className="text-2xl font-bold text-gray-800 mb-6">Publish a Trip</h1>
+    <PageContainer width="sm">
+      <PageHeader title="Post a trip" subtitle="Passengers see it straight away and can book seats." />
 
-        {loadingParks ? (
-          <LoadingCar label="Loading departure points..." />
-        ) : (
-          <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Departure Point</label>
-              <select
-                {...register('parkId')}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-              >
-                <option value="">Select a departure point</option>
-                {parks.map((park) => (
-                  <option key={park.id} value={park.id}>
-                    {park.name}
-                  </option>
-                ))}
-                <option value={OTHER_PARK}>Other (type it below)</option>
-              </select>
-              {errors.parkId && <p className="text-red-600 text-sm mt-1">{errors.parkId.message}</p>}
-            </div>
+      {loadingParks ? (
+        <LoadingCar label="Loading departure points..." />
+      ) : (
+        <form onSubmit={handleSubmit(onSubmit)} className="space-y-5" noValidate>
+          <Select label="Leaving from" error={errors.parkId?.message} {...register('parkId')}>
+            <option value="">Choose a park</option>
+            {parks.map((park) => (
+              <option key={park.id} value={park.id}>
+                {park.name}
+              </option>
+            ))}
+            <option value={OTHER_PARK}>Somewhere else (type it)</option>
+          </Select>
 
-            {selectedPark === OTHER_PARK && (
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Departure Point Name</label>
-                <input
-                  {...register('customParkName')}
-                  list="bamenda-locations"
-                  placeholder="e.g. Bambili"
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
-                {errors.customParkName && (
-                  <p className="text-red-600 text-sm mt-1">{errors.customParkName.message}</p>
-                )}
-              </div>
-            )}
+          {selectedPark === OTHER_PARK && (
+            <Input
+              label="Departure point name"
+              list="bamenda-locations"
+              placeholder="e.g. Bambili Three Corners"
+              error={errors.customParkName?.message}
+              {...register('customParkName')}
+            />
+          )}
 
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Destination</label>
-              <input
-                {...register('destination')}
-                list="bamenda-locations"
-                placeholder="e.g. Mile 4 Nkwen"
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
-              {errors.destination && <p className="text-red-600 text-sm mt-1">{errors.destination.message}</p>}
-            </div>
+          <Input
+            label="Going to"
+            list="bamenda-locations"
+            placeholder="e.g. Mile 4 Nkwen"
+            autoComplete="off"
+            error={errors.destination?.message}
+            {...register('destination')}
+          />
 
-            <datalist id="bamenda-locations">
-              {BAMENDA_LOCATIONS.map((loc) => (
-                <option key={loc} value={loc} />
-              ))}
-            </datalist>
+          <datalist id="bamenda-locations">
+            {BAMENDA_LOCATIONS.map((loc) => (
+              <option key={loc} value={loc} />
+            ))}
+          </datalist>
 
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Departure Date</label>
-                <input
-                  type="date"
-                  {...register('departureDate')}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
-                {errors.departureDate && <p className="text-red-600 text-sm mt-1">{errors.departureDate.message}</p>}
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Departure Time</label>
-                <input
-                  type="time"
-                  {...register('departureTime')}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
-                {errors.departureTime && <p className="text-red-600 text-sm mt-1">{errors.departureTime.message}</p>}
-              </div>
-            </div>
+          <div className="grid grid-cols-2 gap-3">
+            <Input type="date" label="Date" min={todayISODate()} error={errors.departureDate?.message} {...register('departureDate')} />
+            <Input type="time" label="Time" error={errors.departureTime?.message} {...register('departureTime')} />
+          </div>
 
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Price per Seat (XAF)</label>
-                <Controller
-                  name="pricePerSeat"
-                  control={control}
-                  render={({ field }) => (
-                    <PriceStepper value={field.value} onChange={field.onChange} step={50} min={100} />
-                  )}
-                />
-                {errors.pricePerSeat && <p className="text-red-600 text-sm mt-1">{errors.pricePerSeat.message}</p>}
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Total Seats</label>
-                <input
-                  type="number"
-                  {...register('totalSeats', { valueAsNumber: true })}
-                  min={4}
-                  max={30}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
-                {errors.totalSeats && <p className="text-red-600 text-sm mt-1">{errors.totalSeats.message}</p>}
-              </div>
-            </div>
+          <div className="grid gap-5 sm:grid-cols-2 sm:gap-3">
+            <Controller
+              name="pricePerSeat"
+              control={control}
+              render={({ field }) => (
+                <FieldShell id="price" label="Price per seat" error={errors.pricePerSeat?.message}>
+                  <PriceStepper id="price" value={field.value} onChange={field.onChange} />
+                </FieldShell>
+              )}
+            />
+            <Controller
+              name="totalSeats"
+              control={control}
+              render={({ field }) => (
+                <FieldShell id="seats" label="Seats for passengers" error={errors.totalSeats?.message}>
+                  <Stepper id="seats" value={field.value} onChange={field.onChange} min={1} max={30} label="seats for passengers" />
+                </FieldShell>
+              )}
+            />
+          </div>
 
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Notes (optional)</label>
-              <textarea
-                {...register('notes')}
-                rows={3}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
-            </div>
+          <Textarea
+            label="Notes for passengers"
+            optional
+            rows={3}
+            placeholder="e.g. Pickup at the Total station, one bag per person"
+            error={errors.notes?.message}
+            {...register('notes')}
+          />
 
-            {serverError && <div className="p-2 bg-red-50 text-red-600 text-sm rounded">{serverError}</div>}
+          {serverError && <Notice>{serverError}</Notice>}
 
-            <button
-              type="submit"
-              disabled={submitting}
-              className="w-full bg-blue-600 text-white py-2 rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50"
-            >
-              {submitting ? 'Publishing...' : 'Publish Trip'}
-            </button>
-          </form>
-        )}
-      </div>
-    </div>
+          <div className="flex gap-3 pt-1">
+            <Button variant="secondary" onClick={() => navigate(-1)} className="flex-1">
+              Cancel
+            </Button>
+            <Button type="submit" loading={submitting} className="flex-[2]">
+              Post trip
+            </Button>
+          </div>
+        </form>
+      )}
+    </PageContainer>
   )
 }

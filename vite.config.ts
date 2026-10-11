@@ -19,9 +19,9 @@ export default defineConfig({
         manifest: {
           name: 'Ride Along',
           short_name: 'Ride Along',
-          description: 'Book intercity taxi rides across Cameroon',
-          theme_color: '#2563EB',
-          background_color: '#ffffff',
+          description: 'Book your seat on taxis leaving Bamenda\'s parks',
+          theme_color: '#1C2321',
+          background_color: '#F5F6F4',
           display: 'standalone',
           orientation: 'portrait',
           start_url: '/',

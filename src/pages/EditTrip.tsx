@@ -1,20 +1,36 @@
-import { useState, useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { useForm, Controller } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
-import { useNavigate, useParams, Link } from 'react-router-dom'
+import { useNavigate, useParams } from 'react-router-dom'
+import { useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../hooks/useAuth'
-import { PriceStepper } from '../components/PriceStepper'
+import { useFeedback } from '../context/FeedbackContext'
+import { PageContainer } from '../components/AppLayout'
+import { PriceStepper, Stepper } from '../components/PriceStepper'
 import { LoadingCar } from '../components/LoadingCar'
+import { RouteLabel } from '../components/RouteLabel'
+import { Button, LinkButton } from '../components/ui/Button'
+import { FieldShell, Input, Notice, Textarea } from '../components/ui/Field'
+import { EmptyState, PageHeader } from '../components/ui/Display'
+import { plural, todayISODate, tripDeparture } from '../lib/format'
+import { getErrorMessage } from '../lib/errors'
 
-const editSchema = z.object({
-  departureDate: z.string().min(1, 'Select a date'),
-  departureTime: z.string().min(1, 'Select a time'),
-  pricePerSeat: z.number().min(100, 'Enter a valid price'),
-  totalSeats: z.number().min(4, 'Minimum 4 seats').max(30, 'Maximum 30 seats'),
-  notes: z.string().optional(),
-})
+const editSchema = z
+  .object({
+    departureDate: z.string().min(1, 'Choose a date'),
+    departureTime: z.string().min(1, 'Choose a time'),
+    pricePerSeat: z.number().min(100, 'Price must be at least 100 XAF'),
+    totalSeats: z.number().int().min(1, 'At least 1 seat').max(30, 'At most 30 seats'),
+    notes: z.string().max(300, 'Keep notes under 300 characters').optional(),
+  })
+  .superRefine((data, ctx) => {
+    const dep = tripDeparture(data.departureDate, data.departureTime)
+    if (dep && dep.getTime() < Date.now()) {
+      ctx.addIssue({ code: 'custom', message: 'This time has already passed', path: ['departureTime'] })
+    }
+  })
 
 type EditForm = z.infer<typeof editSchema>
 
@@ -35,13 +51,14 @@ interface TripRecord {
 export default function EditTrip() {
   const { tripId } = useParams<{ tripId: string }>()
   const navigate = useNavigate()
+  const queryClient = useQueryClient()
   const { user } = useAuth()
+  const { toast } = useFeedback()
 
   const [trip, setTrip] = useState<TripRecord | null>(null)
   const [loading, setLoading] = useState(true)
   const [serverError, setServerError] = useState('')
   const [submitting, setSubmitting] = useState(false)
-  const [bookedSeats, setBookedSeats] = useState(0)
 
   const {
     register,
@@ -52,43 +69,39 @@ export default function EditTrip() {
   } = useForm<EditForm>({ resolver: zodResolver(editSchema) })
 
   useEffect(() => {
-    if (!tripId) return
-
+    if (!tripId || !user) return
     supabase
       .from('trips')
-      .select(`
-        id, driver_id, departure_date, departure_time, price_per_seat,
-        total_seats, available_seats, notes, status,
-        route:routes!trips_route_id_fkey (destination),
-        park:taxi_parks!trips_park_id_fkey (name)
-      `)
+      .select(
+        `id, driver_id, departure_date, departure_time, price_per_seat, total_seats, available_seats, notes, status,
+         route:routes!trips_route_id_fkey (destination),
+         park:taxi_parks!trips_park_id_fkey (name)`
+      )
       .eq('id', tripId)
-      .single()
-      .then(({ data, error }) => {
-        if (error || !data) {
-          setServerError('Trip not found')
-          setLoading(false)
-          return
+      .eq('driver_id', user.id)
+      .maybeSingle()
+      .then(({ data }) => {
+        const row = data as unknown as TripRecord | null
+        setTrip(row)
+        if (row) {
+          reset({
+            departureDate: row.departure_date,
+            departureTime: row.departure_time?.slice(0, 5),
+            pricePerSeat: row.price_per_seat,
+            totalSeats: row.total_seats,
+            notes: row.notes || '',
+          })
         }
-        setTrip(data as any)
-        const booked = data.total_seats - data.available_seats
-        setBookedSeats(booked)
-        reset({
-          departureDate: data.departure_date,
-          departureTime: data.departure_time?.slice(0, 5),
-          pricePerSeat: data.price_per_seat,
-          totalSeats: data.total_seats,
-          notes: data.notes || '',
-        })
         setLoading(false)
       })
-  }, [tripId, reset])
+  }, [tripId, user, reset])
+
+  const bookedSeats = trip ? trip.total_seats - trip.available_seats : 0
 
   const onSubmit = async (data: EditForm) => {
     if (!trip || !user) return
-
     if (data.totalSeats < bookedSeats) {
-      setServerError(`Total seats can't be less than the ${bookedSeats} already booked.`)
+      setServerError(`${plural(bookedSeats, 'seat')} already booked. Total seats can’t go below that.`)
       return
     }
 
@@ -96,8 +109,9 @@ export default function EditTrip() {
     setServerError('')
 
     try {
-      const newAvailable = data.totalSeats - bookedSeats
-
+      // available_seats is recalculated from live bookings by the database
+      // trigger in supabase/ridealong_fixes.sql, so a booking made while this
+      // form was open can't be overwritten. The value sent here is a fallback.
       const { error } = await supabase
         .from('trips')
         .update({
@@ -105,17 +119,20 @@ export default function EditTrip() {
           departure_time: data.departureTime,
           price_per_seat: data.pricePerSeat,
           total_seats: data.totalSeats,
-          available_seats: newAvailable,
-          notes: data.notes || null,
+          available_seats: data.totalSeats - bookedSeats,
+          notes: data.notes?.trim() || null,
         })
         .eq('id', trip.id)
         .eq('driver_id', user.id)
+        .eq('status', 'scheduled')
 
       if (error) throw error
 
+      await queryClient.invalidateQueries({ queryKey: ['driver-trips', user.id] })
+      toast(bookedSeats > 0 ? 'Changes saved. Booked passengers have been notified.' : 'Changes saved.')
       navigate('/driver/dashboard')
-    } catch (err: any) {
-      setServerError(err?.message || 'Failed to update trip')
+    } catch (err) {
+      setServerError(getErrorMessage(err, 'Changes not saved. Try again.'))
     } finally {
       setSubmitting(false)
     }
@@ -123,123 +140,75 @@ export default function EditTrip() {
 
   if (loading) return <LoadingCar label="Loading trip..." />
 
-  if (!trip) {
+  if (!trip || trip.status !== 'scheduled') {
     return (
-      <div className="min-h-screen bg-gray-100 p-4">
-        <div className="max-w-lg mx-auto bg-white rounded-lg shadow-xl p-6 mt-6 text-center">
-          <p className="text-gray-600">{serverError || 'Trip not found'}</p>
-          <Link to="/driver/dashboard" className="text-blue-600 hover:underline mt-4 inline-block">
-            Back to My Trips
-          </Link>
-        </div>
-      </div>
-    )
-  }
-
-  if (trip.status !== 'scheduled') {
-    return (
-      <div className="min-h-screen bg-gray-100 p-4">
-        <div className="max-w-lg mx-auto bg-white rounded-lg shadow-xl p-6 mt-6 text-center">
-          <p className="text-gray-600">
-            This trip is <span className="capitalize font-medium">{trip.status}</span> and can no longer be edited.
-          </p>
-          <Link to="/driver/dashboard" className="text-blue-600 hover:underline mt-4 inline-block">
-            Back to My Trips
-          </Link>
-        </div>
-      </div>
+      <PageContainer width="sm">
+        <EmptyState
+          title={trip ? 'This trip can’t be edited' : 'Trip not found'}
+          message={trip ? 'Only upcoming trips can be changed. Trips on the road, completed or cancelled are locked.' : 'It may have been deleted.'}
+          action={<LinkButton to="/driver/dashboard">Back to my trips</LinkButton>}
+        />
+      </PageContainer>
     )
   }
 
   return (
-    <div className="min-h-screen bg-gray-100 p-4">
-      <div className="max-w-lg mx-auto bg-white rounded-lg shadow-xl p-6 mt-6">
-        <h1 className="text-2xl font-bold text-gray-800 mb-1">Edit Trip</h1>
-        <p className="text-sm text-gray-500 mb-6">
-          {trip.park?.name} → {trip.route?.destination}
-        </p>
+    <PageContainer width="sm">
+      <PageHeader title="Edit trip" />
 
-        {bookedSeats > 0 && (
-          <div className="mb-4 p-3 bg-yellow-50 text-yellow-800 text-sm rounded-lg">
-            {bookedSeats} seat{bookedSeats > 1 ? 's' : ''} already booked. Total seats can't go below this number.
-          </div>
-        )}
-
-        <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Departure Date</label>
-              <input
-                type="date"
-                {...register('departureDate')}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
-              {errors.departureDate && <p className="text-red-600 text-sm mt-1">{errors.departureDate.message}</p>}
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Departure Time</label>
-              <input
-                type="time"
-                {...register('departureTime')}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
-              {errors.departureTime && <p className="text-red-600 text-sm mt-1">{errors.departureTime.message}</p>}
-            </div>
-          </div>
-
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Price per Seat (XAF)</label>
-              <Controller
-                name="pricePerSeat"
-                control={control}
-                render={({ field }) => (
-                  <PriceStepper value={field.value} onChange={field.onChange} step={50} min={100} />
-                )}
-              />
-              {errors.pricePerSeat && <p className="text-red-600 text-sm mt-1">{errors.pricePerSeat.message}</p>}
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Total Seats</label>
-              <input
-                type="number"
-                {...register('totalSeats', { valueAsNumber: true })}
-                min={Math.max(4, bookedSeats)}
-                max={30}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
-              {errors.totalSeats && <p className="text-red-600 text-sm mt-1">{errors.totalSeats.message}</p>}
-            </div>
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Notes (optional)</label>
-            <textarea
-              {...register('notes')}
-              rows={3}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
-          </div>
-
-          {serverError && <div className="p-2 bg-red-50 text-red-600 text-sm rounded">{serverError}</div>}
-
-          <div className="flex gap-3">
-            <button
-              type="submit"
-              disabled={submitting}
-              className="flex-1 bg-blue-600 text-white py-2 rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50"
-            >
-              {submitting ? 'Saving...' : 'Save Changes'}
-            </button>
-            <Link
-              to="/driver/dashboard"
-              className="flex-1 text-center bg-gray-200 text-gray-700 py-2 rounded-lg hover:bg-gray-300 transition-colors"
-            >
-              Cancel
-            </Link>
-          </div>
-        </form>
+      <div className="mb-5 rounded-2xl border border-line bg-card p-4">
+        <RouteLabel from={trip.park?.name || 'Unknown park'} to={trip.route?.destination || 'Unknown'} />
+        <p className="mt-3 text-xs text-muted">To change the route, cancel this trip and post a new one.</p>
       </div>
-    </div>
+
+      {bookedSeats > 0 && (
+        <div className="mb-5">
+          <Notice tone="warning">
+            {plural(bookedSeats, 'seat')} already booked. Passengers are notified if you change the date, time or price.
+          </Notice>
+        </div>
+      )}
+
+      <form onSubmit={handleSubmit(onSubmit)} className="space-y-5" noValidate>
+        <div className="grid grid-cols-2 gap-3">
+          <Input type="date" label="Date" min={todayISODate()} error={errors.departureDate?.message} {...register('departureDate')} />
+          <Input type="time" label="Time" error={errors.departureTime?.message} {...register('departureTime')} />
+        </div>
+
+        <div className="grid gap-5 sm:grid-cols-2 sm:gap-3">
+          <Controller
+            name="pricePerSeat"
+            control={control}
+            render={({ field }) => (
+              <FieldShell id="price" label="Price per seat" error={errors.pricePerSeat?.message}>
+                <PriceStepper id="price" value={field.value} onChange={field.onChange} />
+              </FieldShell>
+            )}
+          />
+          <Controller
+            name="totalSeats"
+            control={control}
+            render={({ field }) => (
+              <FieldShell id="seats" label="Seats for passengers" error={errors.totalSeats?.message} hint={bookedSeats > 0 ? `At least ${bookedSeats}` : undefined}>
+                <Stepper id="seats" value={field.value} onChange={field.onChange} min={Math.max(1, bookedSeats)} max={30} label="seats for passengers" />
+              </FieldShell>
+            )}
+          />
+        </div>
+
+        <Textarea label="Notes for passengers" optional rows={3} error={errors.notes?.message} {...register('notes')} />
+
+        {serverError && <Notice>{serverError}</Notice>}
+
+        <div className="flex gap-3 pt-1">
+          <LinkButton to="/driver/dashboard" variant="secondary" className="flex-1">
+            Cancel
+          </LinkButton>
+          <Button type="submit" loading={submitting} className="flex-[2]">
+            Save changes
+          </Button>
+        </div>
+      </form>
+    </PageContainer>
   )
 }

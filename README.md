@@ -1,75 +1,55 @@
-# React + TypeScript + Vite
+# Ride Along
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+Book your seat on taxis leaving Bamenda's parks. Passengers see real departures with the time, price and seats left; drivers post trips, see who booked, and share their location once they leave.
 
-Currently, two official plugins are available:
+A product by [AsghinLabs](https://asghinlabs.vercel.app/).
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+## Stack
 
-## React Compiler
+- React 19 + TypeScript, built with Vite
+- Tailwind CSS v4 (design tokens live in `src/index.css`)
+- Supabase: auth, Postgres, realtime (chat, live location, notifications) and storage (avatars)
+- TanStack Query for data fetching, React Hook Form + Zod for forms, Leaflet for maps
+- Deployed on Vercel (`vercel.json` sends every route to the app so deep links work)
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+## Run it locally
 
-## Expanding the ESLint configuration
-
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
-
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-
+```bash
+npm install
+cp .env.example .env   # then fill in your Supabase URL and publishable key
+npm run dev
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+| Variable | What it is |
+| --- | --- |
+| `VITE_SUPABASE_URL` | Project URL from Supabase > Settings > API |
+| `VITE_SUPABASE_ANON_KEY` | Publishable (anon) key from the same page |
+| `VITE_SUPPORT_WHATSAPP` | Optional. Support number, digits only with country code, e.g. `237670000000`. Shows a "Message us on WhatsApp" link to phone-only users who forget their password. |
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+Add the same variables in Vercel > Project > Settings > Environment Variables.
 
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+## Database
+
+`supabase/ridealong_fixes.sql` holds the triggers and policies the app relies on: profile creation at sign-up, protected columns (role, verification, rating), seat recounting, trip-to-booking status updates, ratings, notifications, and who can see chat and live location. Run it in the Supabase SQL editor. It is safe to run more than once.
+
+## Project layout
 
 ```
+src/
+  components/      shared pieces (TripCard, modals, Nav)
+    ui/            Button, form fields, Modal, badges
+  context/         Auth, toasts/confirm dialogs, driver location sharing
+  pages/           one file per route
+  lib/             Supabase client, formatting, phone helpers, config
+  types/           row shapes for Supabase queries
+supabase/          SQL to run in the Supabase dashboard
+```
+
+## Accounts and roles
+
+- **Passenger**: browses and books trips, chats with the driver, follows the trip on a map, rates the driver.
+- **Driver**: posts and manages trips, sees passengers, shares location, earns a verified badge.
+- **Admin**: verifies drivers at `/admin`. Make an account admin in the SQL editor:
+  `update public.users set role = 'admin' where phone = '+237XXXXXXXXX';`
+
+Sign-in works with a phone number or email. Phone-only accounts use a hidden synthetic email (`2376XXXXXXXX@ridealong.com`) for Supabase Auth; see `src/lib/phone.ts`.

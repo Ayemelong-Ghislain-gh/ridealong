@@ -1,7 +1,13 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
 import { supabase } from '../lib/supabase'
+import { useAuth } from '../hooks/useAuth'
+import { Modal } from './ui/Modal'
+import { Avatar, BookingStatusBadge, TripStatusBadge } from './ui/Display'
 import { LoadingCar } from './LoadingCar'
 import { RouteLabel } from './RouteLabel'
+import { ChatModal } from './ChatModal'
+import { formatTripDate, formatTripTime, formatXAF, plural } from '../lib/format'
 
 interface TripDetailsModalProps {
   tripId: string
@@ -13,7 +19,7 @@ interface PassengerBooking {
   seats_booked: number
   status: string
   booking_reference: string
-  passenger: { full_name: string; phone: string } | null
+  passenger: { full_name: string | null; phone: string | null; avatar_url: string | null } | null
 }
 
 interface TripInfo {
@@ -28,96 +34,132 @@ interface TripInfo {
   park: { name: string } | null
 }
 
+/** Driver's view of one trip: who booked, how to reach them. */
 export function TripDetailsModal({ tripId, onClose }: TripDetailsModalProps) {
-  const [trip, setTrip] = useState<TripInfo | null>(null)
-  const [bookings, setBookings] = useState<PassengerBooking[]>([])
-  const [loading, setLoading] = useState(true)
+  const { user } = useAuth()
+  const [chatWith, setChatWith] = useState<PassengerBooking | null>(null)
 
-  useEffect(() => {
-    Promise.all([
-      supabase
-        .from('trips')
-        .select(`
-          departure_date, departure_time, price_per_seat, total_seats,
-          available_seats, status, notes,
-          route:routes!trips_route_id_fkey (destination),
-          park:taxi_parks!trips_park_id_fkey (name)
-        `)
-        .eq('id', tripId)
-        .single(),
-      supabase
-        .from('bookings')
-        .select(`
-          id, seats_booked, status, booking_reference,
-          passenger:users!bookings_passenger_id_fkey (full_name, phone)
-        `)
-        .eq('trip_id', tripId)
-        .order('created_at', { ascending: true }),
-    ]).then(([tripRes, bookingsRes]) => {
-      setTrip(tripRes.data as any)
-      setBookings((bookingsRes.data as any) || [])
-      setLoading(false)
-    })
-  }, [tripId])
+  const { data, isLoading } = useQuery({
+    queryKey: ['trip-details', tripId],
+    queryFn: async () => {
+      const [tripRes, bookingsRes] = await Promise.all([
+        supabase
+          .from('trips')
+          .select(
+            `departure_date, departure_time, price_per_seat, total_seats, available_seats, status, notes,
+             route:routes!trips_route_id_fkey (destination),
+             park:taxi_parks!trips_park_id_fkey (name)`
+          )
+          .eq('id', tripId)
+          .single(),
+        supabase
+          .from('bookings')
+          .select(
+            `id, seats_booked, status, booking_reference,
+             passenger:users!bookings_passenger_id_fkey (full_name, phone, avatar_url)`
+          )
+          .eq('trip_id', tripId)
+          .order('created_at', { ascending: true }),
+      ])
+      return {
+        trip: tripRes.data as unknown as TripInfo | null,
+        bookings: (bookingsRes.data || []) as unknown as PassengerBooking[],
+      }
+    },
+  })
+
+  const trip = data?.trip
+  const active = (data?.bookings || []).filter((b) => b.status !== 'cancelled')
+  const cancelled = (data?.bookings || []).filter((b) => b.status === 'cancelled')
+  const bookedSeats = active.reduce((sum, b) => sum + b.seats_booked, 0)
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-      <div className="bg-white rounded-lg shadow-xl max-w-lg w-full p-6 max-h-[85vh] overflow-y-auto">
-        <div className="flex justify-between items-start mb-4">
-          <h2 className="text-xl font-bold text-gray-800">Trip Details</h2>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl leading-none">
-            ×
-          </button>
-        </div>
+    <Modal title="Trip details" onClose={onClose} size="lg">
+      {isLoading && <LoadingCar label="Loading trip..." />}
 
-        {loading && <LoadingCar label="Loading details..." />}
-
-        {!loading && trip && (
-          <>
-            <div className="space-y-1 text-sm mb-4">
-              <RouteLabel from={trip.park?.name || 'Unknown'} to={trip.route?.destination || 'Unknown'} />
-              <p className="text-gray-600 pt-1">
-                {trip.departure_date} at {trip.departure_time?.slice(0, 5)}
+      {trip && (
+        <>
+          <div className="rounded-xl bg-paper p-4">
+            <div className="mb-3 flex items-center justify-between gap-3">
+              <p className="text-sm font-semibold text-muted">
+                {formatTripDate(trip.departure_date)} at {formatTripTime(trip.departure_time)}
               </p>
-              <p className="text-gray-600">
-                {trip.price_per_seat.toLocaleString()} XAF/seat · {trip.total_seats - trip.available_seats}/
-                {trip.total_seats} seats booked
-              </p>
-              {trip.notes && <p className="text-gray-600 italic">"{trip.notes}"</p>}
-              <span className="inline-block mt-1 text-xs px-2 py-1 rounded-full bg-gray-100 text-gray-700 capitalize">
-                {trip.status}
-              </span>
+              <TripStatusBadge status={trip.status} />
             </div>
-
-            <div className="border-t pt-4">
-              <h3 className="font-medium text-gray-700 mb-2 text-sm">
-                Passengers ({bookings.filter((b) => b.status === 'confirmed').length})
-              </h3>
-              {bookings.length === 0 && <p className="text-sm text-gray-400">No bookings yet.</p>}
-              <div className="space-y-2">
-                {bookings.map((b) => (
-                  <div key={b.id} className="flex justify-between items-center text-sm bg-gray-50 rounded-lg px-3 py-2">
-                    <div>
-                      <p className="font-medium text-gray-800">{b.passenger?.full_name || 'Unknown'}</p>
-                      <p className="text-gray-500">
-                        {b.passenger?.phone} · {b.seats_booked} seat{b.seats_booked > 1 ? 's' : ''} · Ref:{' '}
-                        {b.booking_reference}
-                      </p>
-                    </div>
-                    <span
-                      className={`text-xs px-2 py-1 rounded-full capitalize ${
-                        b.status === 'confirmed' ? 'bg-blue-100 text-blue-800' : 'bg-gray-200 text-gray-600'
-                      }`}
-                    >
-                      {b.status}
-                    </span>
-                  </div>
-                ))}
+            <RouteLabel from={trip.park?.name || 'Unknown park'} to={trip.route?.destination || 'Unknown'} />
+            <div className="mt-4 grid grid-cols-3 gap-2 border-t border-line pt-3 text-center">
+              <div>
+                <p className="text-lg font-extrabold">
+                  {bookedSeats}/{trip.total_seats}
+                </p>
+                <p className="text-xs text-muted">seats booked</p>
+              </div>
+              <div>
+                <p className="text-lg font-extrabold">{formatXAF(trip.price_per_seat)}</p>
+                <p className="text-xs text-muted">per seat</p>
+              </div>
+              <div>
+                <p className="text-lg font-extrabold">{formatXAF(bookedSeats * trip.price_per_seat)}</p>
+                <p className="text-xs text-muted">expected</p>
               </div>
             </div>
-          </>
-        )}
-      </div>
-    </div>
+            {trip.notes && <p className="mt-3 border-t border-line pt-3 text-sm text-muted">“{trip.notes}”</p>}
+          </div>
+
+          <h3 className="mt-6 text-sm font-bold">Passengers</h3>
+          {active.length === 0 && <p className="mt-2 text-sm text-muted">No bookings yet. Passengers who book appear here.</p>}
+
+          <ul className="mt-2 divide-y divide-line">
+            {active.map((b) => (
+              <li key={b.id} className="flex items-center gap-3 py-3">
+                <Avatar name={b.passenger?.full_name} url={b.passenger?.avatar_url} />
+                <div className="min-w-0 flex-1">
+                  <p className="truncate font-semibold">{b.passenger?.full_name || 'Passenger'}</p>
+                  <p className="text-sm text-muted">
+                    {plural(b.seats_booked, 'seat')}, ref {b.booking_reference}
+                  </p>
+                </div>
+                <div className="flex shrink-0 gap-2">
+                  {b.passenger?.phone && (
+                    <a
+                      href={`tel:${b.passenger.phone}`}
+                      aria-label={`Call ${b.passenger.full_name ?? 'passenger'}`}
+                      className="flex h-10 items-center rounded-full border border-line px-3.5 text-sm font-semibold hover:border-ink/30"
+                    >
+                      Call
+                    </a>
+                  )}
+                  {b.status === 'confirmed' && (
+                    <button
+                      onClick={() => setChatWith(b)}
+                      className="flex h-10 items-center rounded-full bg-ink px-3.5 text-sm font-semibold text-white hover:bg-ink-soft"
+                    >
+                      Message
+                    </button>
+                  )}
+                  {b.status !== 'confirmed' && <BookingStatusBadge status={b.status} />}
+                </div>
+              </li>
+            ))}
+          </ul>
+
+          {cancelled.length > 0 && (
+            <p className="mt-3 text-xs text-faint">
+              {plural(cancelled.length, 'booking')} cancelled by passengers.
+            </p>
+          )}
+        </>
+      )}
+
+      {chatWith && user && (
+        <ChatModal
+          bookingId={chatWith.id}
+          currentUserId={user.id}
+          otherPartyName={chatWith.passenger?.full_name || 'Passenger'}
+          subtitle={trip ? `${trip.park?.name ?? ''} to ${trip.route?.destination ?? ''}, ${formatTripDate(trip.departure_date)}` : undefined}
+          onClose={() => setChatWith(null)}
+        />
+      )}
+    </Modal>
   )
 }

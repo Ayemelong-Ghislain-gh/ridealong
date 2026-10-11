@@ -1,67 +1,40 @@
+import { useMemo, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../hooks/useAuth'
-import { LoadingCar } from '../components/LoadingCar'
+import { useFeedback } from '../context/FeedbackContext'
+import { PageContainer } from '../components/AppLayout'
 import { BookingDetailsModal } from '../components/BookingDetailsModal'
 import { ReviewModal } from '../components/ReviewModal'
 import { RouteLabel } from '../components/RouteLabel'
+import { Button, LinkButton } from '../components/ui/Button'
+import { BookingStatusBadge, EmptyState, PageHeader, Skeleton, TripStatusBadge } from '../components/ui/Display'
+import { formatTripDate, formatTripTime, formatXAF, isPastDeparture, plural } from '../lib/format'
+import { getErrorMessage } from '../lib/errors'
+import { BOOKING_SELECT } from '../types/rows'
+import type { BookingRow } from '../types/rows'
 
-const STATUS_STYLES: Record<string, string> = {
-  confirmed: 'bg-blue-100 text-blue-800',
-  cancelled: 'bg-red-100 text-red-800',
-  completed: 'bg-green-100 text-green-800',
-}
-
-// Explicit shape for the joined query below. Without generated Supabase
-// `Database` types, `.select()` can't tell that `trip:trips!fkey(...)` and
-// its nested `driver`/`route`/`park` relations are to-one, so it defaults
-// to typing all of them as arrays. This interface (plus the
-// `as unknown as` cast in queryFn) fixes that.
-interface BookingTripRow {
-  driver_id: string
-  departure_date: string
-  departure_time: string
-  price_per_seat: number
-  driver: { full_name: string } | null
-  route: { destination: string } | null
-  park: { name: string } | null
-}
-
-interface BookingRow {
-  id: string
-  seats_booked: number
-  status: string
-  booking_reference: string
-  created_at: string
-  trip: BookingTripRow | null
-}
+type Tab = 'upcoming' | 'past'
 
 export default function PassengerBookings() {
   const { user } = useAuth()
+  const { toast, confirm } = useFeedback()
   const queryClient = useQueryClient()
-  const [cancellingId, setCancellingId] = useState<string | null>(null)
-  const [deletingId, setDeletingId] = useState<string | null>(null)
-  const [detailsBooking, setDetailsBooking] = useState<any | null>(null)
-  const [reviewingBooking, setReviewingBooking] = useState<any | null>(null)
+  const [tab, setTab] = useState<Tab>('upcoming')
+  const [busyId, setBusyId] = useState<string | null>(null)
+  const [detailsBooking, setDetailsBooking] = useState<BookingRow | null>(null)
+  const [reviewingBooking, setReviewingBooking] = useState<BookingRow | null>(null)
 
-  const { data: bookings, isLoading } = useQuery({
+  const { data: bookings, isLoading, isError, refetch } = useQuery({
     queryKey: ['my-bookings', user?.id],
     enabled: !!user,
+    refetchInterval: 60_000, // pick up driver status changes (departed, completed)
     queryFn: async () => {
       const { data, error } = await supabase
         .from('bookings')
-        .select(`
-          id, seats_booked, status, booking_reference, created_at,
-          trip:trips!bookings_trip_id_fkey (
-            driver_id,
-            departure_date, departure_time, price_per_seat,
-            driver:users!trips_driver_id_fkey (full_name),
-            route:routes!trips_route_id_fkey (destination),
-            park:taxi_parks!trips_park_id_fkey (name)
-          )
-        `)
+        .select(BOOKING_SELECT)
         .eq('passenger_id', user!.id)
+        .eq('hidden_by_passenger', false)
         .order('created_at', { ascending: false })
 
       if (error) throw error
@@ -73,151 +46,200 @@ export default function PassengerBookings() {
     queryKey: ['my-reviews', user?.id],
     enabled: !!user,
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from('reviews')
-        .select('booking_id')
-        .eq('passenger_id', user!.id)
-
+      const { data, error } = await supabase.from('reviews').select('booking_id').eq('passenger_id', user!.id)
       if (error) throw error
-      return new Set((data || []).map((r) => r.booking_id))
+      return new Set((data || []).map((r) => r.booking_id as string))
     },
   })
 
-  const cancelBooking = async (bookingId: string) => {
-    if (!confirm('Cancel this booking? Your seats will be released.')) return
-
-    setCancellingId(bookingId)
-    const { error } = await supabase
-      .from('bookings')
-      .update({ status: 'cancelled', cancelled_at: new Date().toISOString() })
-      .eq('id', bookingId)
-
-    setCancellingId(null)
-
-    if (error) {
-      alert('Failed to cancel booking: ' + error.message)
-      return
+  const { upcoming, past } = useMemo(() => {
+    const up: BookingRow[] = []
+    const old: BookingRow[] = []
+    for (const b of bookings || []) {
+      const live =
+        b.status === 'confirmed' &&
+        (b.trip?.status === 'departed' || (b.trip?.status === 'scheduled' && !isPastDeparture(b.trip.departure_date, b.trip.departure_time)))
+      ;(live ? up : old).push(b)
     }
+    // Soonest departure first for upcoming
+    up.sort((a, b) => `${a.trip?.departure_date}${a.trip?.departure_time}`.localeCompare(`${b.trip?.departure_date}${b.trip?.departure_time}`))
+    return { upcoming: up, past: old }
+  }, [bookings])
+
+  const refresh = () => {
     queryClient.invalidateQueries({ queryKey: ['my-bookings', user?.id] })
     queryClient.invalidateQueries({ queryKey: ['trips'] })
   }
 
-  const deleteBooking = async (bookingId: string) => {
-    if (!confirm('Remove this booking from your history? This cannot be undone.')) return
+  const cancelBooking = async (booking: BookingRow) => {
+    const ok = await confirm({
+      title: 'Cancel this booking?',
+      message: `Your ${plural(booking.seats_booked, 'seat')} to ${booking.trip?.route?.destination ?? 'your destination'} will be released for other passengers.`,
+      confirmLabel: 'Cancel booking',
+      cancelLabel: 'Keep it',
+      danger: true,
+    })
+    if (!ok) return
 
-    setDeletingId(bookingId)
-    const { error } = await supabase.from('bookings').delete().eq('id', bookingId)
-    setDeletingId(null)
+    setBusyId(booking.id)
+    const { error } = await supabase
+      .from('bookings')
+      .update({ status: 'cancelled', cancelled_at: new Date().toISOString() })
+      .eq('id', booking.id)
+      .eq('status', 'confirmed')
+    setBusyId(null)
 
     if (error) {
-      alert('Failed to remove booking: ' + error.message)
+      toast(getErrorMessage(error, 'Booking not cancelled. Try again.'), 'error')
       return
     }
-    queryClient.invalidateQueries({ queryKey: ['my-bookings', user?.id] })
+    toast('Booking cancelled.')
+    refresh()
   }
 
-  const handleReviewSubmitted = () => {
-    setReviewingBooking(null)
-    queryClient.invalidateQueries({ queryKey: ['my-reviews', user?.id] })
+  const hideBooking = async (booking: BookingRow) => {
+    const ok = await confirm({
+      title: 'Remove from your list?',
+      message: 'It disappears from your bookings. The driver keeps their record of the trip.',
+      confirmLabel: 'Remove',
+      cancelLabel: 'Keep it',
+    })
+    if (!ok) return
+
+    setBusyId(booking.id)
+    const { error } = await supabase.from('bookings').update({ hidden_by_passenger: true }).eq('id', booking.id)
+    setBusyId(null)
+
+    if (error) {
+      toast(getErrorMessage(error, 'Couldn’t remove it. Try again.'), 'error')
+      return
+    }
+    toast('Removed from your list.')
+    refresh()
   }
+
+  const list = tab === 'upcoming' ? upcoming : past
 
   return (
-    <div className="min-h-screen bg-gray-100 p-4">
-      <div className="max-w-3xl mx-auto">
-        <h1 className="text-2xl font-bold text-gray-800 mb-6 mt-2">My Bookings</h1>
+    <PageContainer width="md">
+      <PageHeader title="My bookings" action={<LinkButton to="/trips" variant="secondary" size="sm">Find a trip</LinkButton>} />
 
-        {isLoading && <LoadingCar label="Loading your bookings..." />}
+      <div className="mb-5 inline-flex rounded-xl bg-line/60 p-1" role="tablist">
+        {(
+          [
+            ['upcoming', `Upcoming${upcoming.length ? ` (${upcoming.length})` : ''}`],
+            ['past', 'Past'],
+          ] as const
+        ).map(([key, label]) => (
+          <button
+            key={key}
+            role="tab"
+            aria-selected={tab === key}
+            onClick={() => setTab(key)}
+            className={`h-9 rounded-lg px-4 text-sm font-semibold transition-colors ${tab === key ? 'bg-card text-ink shadow-sm' : 'text-muted hover:text-ink'}`}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
 
-        {!isLoading && (!bookings || bookings.length === 0) && (
-          <div className="text-center py-12 bg-white rounded-lg shadow">
-            <p className="text-gray-600">You don't have any bookings yet.</p>
-          </div>
-        )}
+      {isLoading && (
+        <div className="space-y-3">
+          {[0, 1, 2].map((i) => (
+            <Skeleton key={i} className="h-36" />
+          ))}
+        </div>
+      )}
 
-        <div className="space-y-4">
-          {bookings?.map((booking) => {
-            const alreadyReviewed = reviewedBookingIds?.has(booking.id)
-            const canReview = booking.status === 'completed' && !alreadyReviewed
+      {isError && (
+        <EmptyState title="Couldn’t load your bookings" message="Check your connection and try again." action={<Button onClick={() => refetch()}>Try again</Button>} />
+      )}
 
-            return (
-              <div key={booking.id} className="bg-white rounded-lg shadow p-4">
-                <div className="flex justify-between items-start flex-wrap gap-3">
-                  <button onClick={() => setDetailsBooking(booking)} className="text-left flex-1 min-w-[180px] hover:opacity-80">
-                    <RouteLabel
-                      from={booking.trip?.park?.name || 'Unknown'}
-                      to={booking.trip?.route?.destination || 'Unknown'}
-                      size="sm"
-                    />
-                    <p className="text-sm text-gray-600 mt-1.5">
-                      {booking.trip?.departure_date} at {booking.trip?.departure_time?.slice(0, 5)}
-                    </p>
-                    <p className="text-sm text-gray-600">Ref: {booking.booking_reference}</p>
-                    <p className="text-sm text-gray-600">
-                      {booking.seats_booked} seat{booking.seats_booked > 1 ? 's' : ''} ·{' '}
-                      {((booking.trip?.price_per_seat || 0) * booking.seats_booked).toLocaleString()} XAF
-                    </p>
-                  </button>
+      {!isLoading && !isError && list.length === 0 && (
+        <EmptyState
+          title={tab === 'upcoming' ? 'No upcoming trips' : 'No past trips yet'}
+          message={tab === 'upcoming' ? 'Book a seat and it shows up here with your reference.' : 'Trips you’ve taken or cancelled appear here.'}
+          action={tab === 'upcoming' ? <LinkButton to="/trips">Find a trip</LinkButton> : undefined}
+        />
+      )}
 
-                  <div className="flex flex-col items-end gap-2">
-                    <span className={`text-xs px-2 py-1 rounded-full capitalize ${STATUS_STYLES[booking.status]}`}>
-                      {booking.status}
-                    </span>
-                    {booking.status === 'confirmed' && (
-                      <button
-                        onClick={() => cancelBooking(booking.id)}
-                        disabled={cancellingId === booking.id}
-                        className="text-sm text-red-600 hover:underline disabled:opacity-50"
-                      >
-                        {cancellingId === booking.id ? 'Cancelling...' : 'Cancel'}
-                      </button>
-                    )}
-                    {canReview && (
-                      <button
-                        onClick={() => setReviewingBooking(booking)}
-                        className="text-sm text-amber-600 hover:underline font-medium"
-                      >
-                        ★ Rate Driver
-                      </button>
-                    )}
-                    {alreadyReviewed && booking.status === 'completed' && (
-                      <span className="text-xs text-gray-400">Rated ✓</span>
-                    )}
-                    {(booking.status === 'cancelled' || booking.status === 'completed') && (
-                      <button
-                        onClick={() => deleteBooking(booking.id)}
-                        disabled={deletingId === booking.id}
-                        className="text-sm text-gray-500 hover:underline disabled:opacity-50"
-                      >
-                        {deletingId === booking.id ? 'Removing...' : 'Remove'}
-                      </button>
+      <div className="space-y-3">
+        {list.map((booking) => {
+          const trip = booking.trip
+          const alreadyReviewed = reviewedBookingIds?.has(booking.id)
+          const canReview = booking.status === 'completed' && !alreadyReviewed
+          const canCancel = booking.status === 'confirmed' && trip?.status === 'scheduled'
+          const canHide = booking.status === 'cancelled' || booking.status === 'completed'
+
+          return (
+            <article key={booking.id} className="overflow-hidden rounded-2xl border border-line bg-card">
+              <button onClick={() => setDetailsBooking(booking)} className="block w-full p-4 text-left hover:bg-paper/60">
+                <div className="mb-3 flex items-start justify-between gap-3">
+                  <p className="text-sm font-semibold">
+                    <span className="font-condensed text-xl font-extrabold">{formatTripTime(trip?.departure_time)}</span>
+                    <span className="ml-2 text-muted">{formatTripDate(trip?.departure_date)}</span>
+                  </p>
+                  <div className="flex gap-1.5">
+                    {trip?.status === 'departed' && booking.status === 'confirmed' ? (
+                      <TripStatusBadge status="departed" />
+                    ) : (
+                      <BookingStatusBadge status={booking.status} />
                     )}
                   </div>
                 </div>
-              </div>
-            )
-          })}
-        </div>
+                <RouteLabel from={trip?.park?.name || 'Unknown park'} to={trip?.route?.destination || 'Unknown'} size="sm" />
+                <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-sm text-muted">
+                  <span>
+                    Ref <span className="font-semibold text-ink">{booking.booking_reference}</span>
+                  </span>
+                  <span>
+                    {plural(booking.seats_booked, 'seat')}, <span className="font-semibold text-ink">{formatXAF((trip?.price_per_seat || 0) * booking.seats_booked)}</span>
+                  </span>
+                </div>
+              </button>
+
+              {(canCancel || canReview || canHide || alreadyReviewed) && (
+                <div className="flex items-center justify-end gap-2 border-t border-line px-4 py-2.5">
+                  {alreadyReviewed && booking.status === 'completed' && <span className="mr-auto text-xs font-semibold text-route">Rated, thank you</span>}
+                  {canReview && (
+                    <Button size="sm" onClick={() => setReviewingBooking(booking)}>
+                      Rate driver
+                    </Button>
+                  )}
+                  {canCancel && (
+                    <Button size="sm" variant="ghost" className="text-danger" loading={busyId === booking.id} onClick={() => cancelBooking(booking)}>
+                      Cancel booking
+                    </Button>
+                  )}
+                  {canHide && (
+                    <Button size="sm" variant="ghost" className="text-muted" loading={busyId === booking.id} onClick={() => hideBooking(booking)}>
+                      Remove
+                    </Button>
+                  )}
+                </div>
+              )}
+            </article>
+          )
+        })}
       </div>
 
-      {detailsBooking && (
-        <BookingDetailsModal
-          booking={detailsBooking}
-          currentUserId={user!.id}
-          onClose={() => setDetailsBooking(null)}
-        />
-      )}
+      {detailsBooking && user && <BookingDetailsModal booking={detailsBooking} currentUserId={user.id} onClose={() => setDetailsBooking(null)} />}
 
-      {reviewingBooking && (
+      {reviewingBooking && user && reviewingBooking.trip && (
         <ReviewModal
           bookingId={reviewingBooking.id}
           driverId={reviewingBooking.trip.driver_id}
-          driverName={reviewingBooking.trip?.driver?.full_name || 'your driver'}
-          destination={reviewingBooking.trip?.route?.destination || 'this trip'}
-          passengerId={user!.id}
+          driverName={reviewingBooking.trip.driver?.full_name || 'your driver'}
+          destination={reviewingBooking.trip.route?.destination || 'your destination'}
+          passengerId={user.id}
           onClose={() => setReviewingBooking(null)}
-          onSubmitted={handleReviewSubmitted}
+          onSubmitted={() => {
+            setReviewingBooking(null)
+            toast('Thanks. Your rating helps other passengers.')
+            queryClient.invalidateQueries({ queryKey: ['my-reviews', user.id] })
+          }}
         />
       )}
-    </div>
+    </PageContainer>
   )
 }

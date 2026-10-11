@@ -1,368 +1,269 @@
-import { useState, useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import type { ChangeEvent, FormEvent, ReactNode } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../hooks/useAuth'
+import { useFeedback } from '../context/FeedbackContext'
+import { PageContainer } from '../components/AppLayout'
 import { LoadingCar } from '../components/LoadingCar'
-import { TripDetailsModal } from '../components/TripDetailsModal'
-import { BookingDetailsModal } from '../components/BookingDetailsModal'
-import { RouteLabel } from '../components/RouteLabel'
+import { Button } from '../components/ui/Button'
+import { Input, Notice } from '../components/ui/Field'
+import { Avatar, Badge, Card, Stars, VerifiedMark } from '../components/ui/Display'
+import { isValidCameroonPhone, normalizePhoneInput } from '../lib/phone'
+import { getErrorMessage } from '../lib/errors'
+import type { DriverProfileInfo } from '../types/rows'
 
-interface DriverProfileData {
-  vehicle_make: string
-  vehicle_model: string
-  vehicle_color: string | null
-  vehicle_plate: string
-  vehicle_capacity: number
-  is_verified_driver: boolean
-  rating: number
-  total_trips: number
-  skills: string[] | null
+interface DriverData extends DriverProfileInfo {
+  vehicle_plate: string | null
+}
+
+const MAX_AVATAR_BYTES = 3 * 1024 * 1024
+
+function Section({ title, description, children }: { title: string; description?: string; children: ReactNode }) {
+  return (
+    <Card className="p-5 sm:p-6">
+      <h2 className="text-lg font-bold">{title}</h2>
+      {description && <p className="mt-0.5 text-sm text-muted">{description}</p>}
+      <div className="mt-5">{children}</div>
+    </Card>
+  )
 }
 
 export default function Profile() {
-  const { user, profile, role, refreshProfile } = useAuth()
+  const { user, profile, role, refreshProfile, signOut } = useAuth()
+  const { toast } = useFeedback()
+  const navigate = useNavigate()
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   const [fullName, setFullName] = useState('')
   const [phone, setPhone] = useState('')
-  const [avatarUrl, setAvatarUrl] = useState<string | null>(null)
   const [uploading, setUploading] = useState(false)
   const [saving, setSaving] = useState(false)
-  const [message, setMessage] = useState('')
   const [error, setError] = useState('')
 
-  const [driverData, setDriverData] = useState<DriverProfileData | null>(null)
+  const [driverData, setDriverData] = useState<DriverData | null>(null)
   const [skillInput, setSkillInput] = useState('')
-  const [history, setHistory] = useState<any[]>([])
-  const [loadingHistory, setLoadingHistory] = useState(true)
-  const [detailsTripId, setDetailsTripId] = useState<string | null>(null)
-  const [detailsBooking, setDetailsBooking] = useState<any | null>(null)
-  const [removingId, setRemovingId] = useState<string | null>(null)
+
+  const [newPassword, setNewPassword] = useState('')
+  const [passwordSaving, setPasswordSaving] = useState(false)
+  const [passwordError, setPasswordError] = useState('')
 
   useEffect(() => {
     if (profile) {
       setFullName(profile.full_name || '')
       setPhone(profile.phone || '')
-      setAvatarUrl(profile.avatar_url || null)
     }
   }, [profile])
 
-  const loadHistory = () => {
-    if (!user) return
-    setLoadingHistory(true)
+  useEffect(() => {
+    if (!user || role !== 'driver') return
+    supabase
+      .from('driver_profiles')
+      .select('id, vehicle_make, vehicle_model, vehicle_color, vehicle_plate, vehicle_capacity, is_verified_driver, rating, total_trips, skills')
+      .eq('id', user.id)
+      .maybeSingle()
+      .then(({ data }) => setDriverData(data as unknown as DriverData | null))
+  }, [user, role])
 
-    if (role === 'driver') {
-      supabase
-        .from('driver_profiles')
-        .select('*')
-        .eq('id', user.id)
-        .single()
-        .then(({ data }) => setDriverData(data))
-
-      supabase
-        .from('trips')
-        .select(`
-          id, departure_date, departure_time, status, price_per_seat,
-          total_seats, available_seats,
-          route:routes!trips_route_id_fkey (destination),
-          park:taxi_parks!trips_park_id_fkey (name)
-        `)
-        .eq('driver_id', user.id)
-        .order('departure_datetime', { ascending: false })
-        .limit(20)
-        .then(({ data }) => {
-          setHistory(data || [])
-          setLoadingHistory(false)
-        })
-    } else {
-      supabase
-        .from('bookings')
-        .select(`
-          id, seats_booked, status, booking_reference, created_at,
-          trip:trips!bookings_trip_id_fkey (
-            departure_date, departure_time, price_per_seat,
-            route:routes!trips_route_id_fkey (destination),
-            park:taxi_parks!trips_park_id_fkey (name)
-          )
-        `)
-        .eq('passenger_id', user.id)
-        .order('created_at', { ascending: false })
-        .limit(20)
-        .then(({ data }) => {
-          setHistory(data || [])
-          setLoadingHistory(false)
-        })
-    }
-  }
-
-  useEffect(loadHistory, [user, role])
-
-  const handleAvatarUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleAvatarUpload = async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
+    e.target.value = '' // allow choosing the same file again
     if (!file || !user) return
 
+    if (!file.type.startsWith('image/')) return toast('Choose an image file.', 'error')
+    if (file.size > MAX_AVATAR_BYTES) return toast('That photo is too large. Choose one under 3 MB.', 'error')
+
     setUploading(true)
-    setError('')
-
     try {
-      const ext = file.name.split('.').pop()
-      const path = `${user.id}/avatar.${ext}`
-
-      const { error: uploadError } = await supabase.storage
-        .from('avatars')
-        .upload(path, file, { upsert: true })
-
+      // One fixed path per user, so old photos are replaced rather than piling up
+      const path = `${user.id}/avatar`
+      const { error: uploadError } = await supabase.storage.from('avatars').upload(path, file, { upsert: true, contentType: file.type })
       if (uploadError) throw uploadError
 
-      const { data: publicUrlData } = supabase.storage.from('avatars').getPublicUrl(path)
-      const publicUrl = `${publicUrlData.publicUrl}?t=${Date.now()}`
+      const { data } = supabase.storage.from('avatars').getPublicUrl(path)
+      const publicUrl = `${data.publicUrl}?t=${Date.now()}`
 
-      const { error: updateError } = await supabase
-        .from('users')
-        .update({ avatar_url: publicUrl })
-        .eq('id', user.id)
-
+      const { error: updateError } = await supabase.from('users').update({ avatar_url: publicUrl }).eq('id', user.id)
       if (updateError) throw updateError
 
-      setAvatarUrl(publicUrl)
       await refreshProfile()
-    } catch (err: any) {
-      setError(err?.message || 'Failed to upload photo')
+      toast('Photo updated.')
+    } catch (err) {
+      toast(getErrorMessage(err, 'Photo not uploaded. Try again.'), 'error')
     } finally {
       setUploading(false)
     }
   }
 
-  const saveProfile = async () => {
+  const saveProfile = async (e: FormEvent) => {
+    e.preventDefault()
     if (!user) return
-    setSaving(true)
-    setMessage('')
     setError('')
 
-    try {
-      const { error: userError } = await supabase
-        .from('users')
-        .update({ full_name: fullName, phone })
-        .eq('id', user.id)
+    const normalizedPhone = normalizePhoneInput(phone)
+    if (!fullName.trim()) return setError('Enter your full name.')
+    if (!isValidCameroonPhone(normalizedPhone)) return setError('Enter a valid Cameroon phone number, e.g. 670 922 913.')
 
+    if (driverData) {
+      if (!driverData.vehicle_make?.trim() || !driverData.vehicle_model?.trim() || !driverData.vehicle_plate?.trim()) {
+        return setError('Vehicle make, model and plate number are required.')
+      }
+      const cap = Number(driverData.vehicle_capacity)
+      if (!Number.isInteger(cap) || cap < 1 || cap > 30) return setError('Passenger seats must be between 1 and 30.')
+    }
+
+    setSaving(true)
+    try {
+      if (normalizedPhone !== profile?.phone) {
+        const { data: taken } = await supabase.rpc('get_auth_email_for_phone', { p_phone: normalizedPhone })
+        if (taken) throw new Error('Another account already uses that phone number.')
+      }
+
+      const { error: userError } = await supabase.from('users').update({ full_name: fullName.trim(), phone: normalizedPhone }).eq('id', user.id)
       if (userError) throw userError
 
       if (role === 'driver' && driverData) {
         const { error: driverError } = await supabase
           .from('driver_profiles')
           .update({
-            vehicle_make: driverData.vehicle_make,
-            vehicle_model: driverData.vehicle_model,
-            vehicle_color: driverData.vehicle_color,
-            vehicle_plate: driverData.vehicle_plate,
-            vehicle_capacity: driverData.vehicle_capacity,
+            vehicle_make: driverData.vehicle_make?.trim(),
+            vehicle_model: driverData.vehicle_model?.trim(),
+            vehicle_color: driverData.vehicle_color?.trim() || null,
+            vehicle_plate: driverData.vehicle_plate?.trim().toUpperCase(),
+            vehicle_capacity: Number(driverData.vehicle_capacity),
             skills: driverData.skills,
           })
           .eq('id', user.id)
-
         if (driverError) throw driverError
       }
 
+      setPhone(normalizedPhone)
       await refreshProfile()
-      setMessage('Profile updated')
-    } catch (err: any) {
-      setError(err?.message || 'Failed to save profile')
+      toast('Profile saved.')
+    } catch (err) {
+      setError(getErrorMessage(err, 'Profile not saved. Try again.'))
     } finally {
       setSaving(false)
     }
   }
 
+  const changePassword = async (e: FormEvent) => {
+    e.preventDefault()
+    if (newPassword.length < 6) return setPasswordError('Use at least 6 characters.')
+    setPasswordSaving(true)
+    setPasswordError('')
+    const { error: pwError } = await supabase.auth.updateUser({ password: newPassword })
+    setPasswordSaving(false)
+    if (pwError) return setPasswordError(getErrorMessage(pwError))
+    setNewPassword('')
+    toast('Password changed.')
+  }
+
   const addSkill = () => {
     const skill = skillInput.trim()
     if (!skill || !driverData) return
-    if (driverData.skills?.includes(skill)) {
-      setSkillInput('')
-      return
+    if (!driverData.skills?.includes(skill)) {
+      setDriverData({ ...driverData, skills: [...(driverData.skills || []), skill] })
     }
-    setDriverData({ ...driverData, skills: [...(driverData.skills || []), skill] })
     setSkillInput('')
   }
 
-  const removeSkill = (skill: string) => {
-    if (!driverData) return
-    setDriverData({ ...driverData, skills: (driverData.skills || []).filter((s) => s !== skill) })
+  const handleSignOut = async () => {
+    await signOut()
+    navigate('/')
   }
 
-  const deleteDriverTrip = async (tripId: string, bookedSeats: number) => {
-    if (bookedSeats > 0) {
-      alert('This trip has booked seats and can only be cancelled, not deleted. Manage it from My Trips.')
-      return
-    }
-    if (!confirm('Delete this trip permanently?')) return
+  if (!user || !profile) return <LoadingCar label="Loading your account..." />
 
-    setRemovingId(tripId)
-    const { error } = await supabase.from('trips').delete().eq('id', tripId)
-    setRemovingId(null)
-
-    if (error) {
-      alert('Failed to delete: ' + error.message)
-      return
-    }
-    loadHistory()
-  }
-
-  const deletePassengerBooking = async (bookingId: string) => {
-    if (!confirm('Remove this booking from your history?')) return
-
-    setRemovingId(bookingId)
-    const { error } = await supabase.from('bookings').delete().eq('id', bookingId)
-    setRemovingId(null)
-
-    if (error) {
-      alert('Failed to remove: ' + error.message)
-      return
-    }
-    loadHistory()
-  }
-
-  if (!user || !profile) {
-    return <LoadingCar label="Loading profile..." />
-  }
+  const roleLabel = role === 'driver' ? 'Driver' : role === 'admin' ? 'Admin' : 'Passenger'
 
   return (
-    <div className="min-h-screen bg-gray-100 p-4">
-      <div className="max-w-2xl mx-auto space-y-6 mt-2">
-        <div className="bg-white rounded-lg shadow p-6">
-          <div className="flex items-center gap-4">
-            <div className="relative">
-              <div className="w-20 h-20 rounded-full bg-gray-200 overflow-hidden flex items-center justify-center text-2xl font-bold text-gray-500">
-                {avatarUrl ? (
-                  <img src={avatarUrl} alt="Avatar" className="w-full h-full object-cover" />
-                ) : (
-                  (fullName || 'U')[0].toUpperCase()
-                )}
-              </div>
-              <button
-                onClick={() => fileInputRef.current?.click()}
-                disabled={uploading}
-                className="absolute bottom-0 right-0 bg-blue-600 text-white rounded-full w-7 h-7 flex items-center justify-center text-xs hover:bg-blue-700 disabled:opacity-50"
-              >
-                {uploading ? '…' : '📷'}
-              </button>
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept="image/*"
-                onChange={handleAvatarUpload}
-                className="hidden"
-              />
-            </div>
-            <div>
-              <h1 className="text-xl font-bold text-gray-800">{fullName || 'Your Profile'}</h1>
-              <p className="text-sm text-gray-500 capitalize">{role}</p>
-              {role === 'driver' && driverData?.is_verified_driver && (
-                <span className="inline-block mt-1 text-xs bg-green-100 text-green-800 px-2 py-0.5 rounded-full">
-                  ✓ Verified Driver
-                </span>
-              )}
-            </div>
-          </div>
-
-          <div className="mt-6 space-y-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Full Name</label>
-              <input
-                value={fullName}
-                onChange={(e) => setFullName(e.target.value)}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Phone</label>
-              <input
-                value={phone}
-                onChange={(e) => setPhone(e.target.value)}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
-              <input
-                value={profile.email ?? ''}
-                disabled
-                className="w-full px-3 py-2 border border-gray-200 bg-gray-50 text-gray-500 rounded-lg"
-              />
-            </div>
+    <PageContainer width="md">
+      {/* Identity */}
+      <div className="mb-6 flex items-center gap-4">
+        <div className="relative">
+          <Avatar name={profile.full_name} url={profile.avatar_url} size="lg" />
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            disabled={uploading}
+            aria-label="Change photo"
+            className="absolute -bottom-1 -right-1 flex h-8 w-8 items-center justify-center rounded-full border-2 border-paper bg-taxi text-ink hover:bg-[#e0aa04] disabled:opacity-50"
+          >
+            <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+              <path d="M4 8h3l2-3h6l2 3h3v11H4z" strokeLinejoin="round" />
+              <circle cx="12" cy="13" r="3.5" />
+            </svg>
+          </button>
+          <input ref={fileInputRef} type="file" accept="image/*" onChange={handleAvatarUpload} className="hidden" />
+        </div>
+        <div className="min-w-0">
+          <h1 className="flex items-center gap-1.5 truncate font-semi-condensed text-2xl font-extrabold sm:text-3xl">
+            {profile.full_name || 'Your account'}
+            {driverData?.is_verified_driver && <VerifiedMark />}
+          </h1>
+          <div className="mt-1 flex flex-wrap items-center gap-2 text-sm text-muted">
+            <Badge tone={role === 'driver' ? 'taxi' : 'neutral'}>{roleLabel}</Badge>
+            {role === 'driver' && (driverData?.rating ?? 0) > 0 && <Stars rating={driverData!.rating!} />}
+            {role === 'driver' && driverData && !driverData.is_verified_driver && <span>Verification pending</span>}
           </div>
         </div>
+      </div>
 
-        {/* Driver-only: vehicle + skills */}
+      <form onSubmit={saveProfile} className="space-y-4">
+        <Section title="Your details" description="Drivers and passengers see your name and phone number on bookings.">
+          <div className="space-y-4">
+            <Input label="Full name" value={fullName} onChange={(e) => setFullName(e.target.value)} autoComplete="name" />
+            <Input label="Phone number" value={phone} onChange={(e) => setPhone(e.target.value)} inputMode="tel" autoComplete="tel" hint="You sign in with this number." />
+            {profile.email && <Input label="Email" value={profile.email} disabled hint="Used for password resets." />}
+          </div>
+        </Section>
+
         {role === 'driver' && driverData && (
-          <div className="bg-white rounded-lg shadow p-6">
-            <h2 className="font-semibold text-gray-800 mb-4">Vehicle Information</h2>
+          <Section title="Your vehicle" description="Passengers see this before they book.">
             <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Make</label>
-                <input
-                  value={driverData.vehicle_make}
-                  onChange={(e) => setDriverData({ ...driverData, vehicle_make: e.target.value })}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Model</label>
-                <input
-                  value={driverData.vehicle_model}
-                  onChange={(e) => setDriverData({ ...driverData, vehicle_model: e.target.value })}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Color</label>
-                <input
-                  value={driverData.vehicle_color || ''}
-                  onChange={(e) => setDriverData({ ...driverData, vehicle_color: e.target.value })}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Plate Number</label>
-                <input
-                  value={driverData.vehicle_plate}
-                  onChange={(e) => setDriverData({ ...driverData, vehicle_plate: e.target.value })}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Seat Capacity</label>
-                <input
-                  type="number"
-                  min={4}
-                  max={30}
-                  value={driverData.vehicle_capacity}
-                  onChange={(e) => setDriverData({ ...driverData, vehicle_capacity: Number(e.target.value) })}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
-              </div>
+              <Input label="Make" value={driverData.vehicle_make || ''} onChange={(e) => setDriverData({ ...driverData, vehicle_make: e.target.value })} />
+              <Input label="Model" value={driverData.vehicle_model || ''} onChange={(e) => setDriverData({ ...driverData, vehicle_model: e.target.value })} />
+              <Input label="Colour" optional value={driverData.vehicle_color || ''} onChange={(e) => setDriverData({ ...driverData, vehicle_color: e.target.value })} />
+              <Input
+                label="Plate number"
+                className="uppercase"
+                value={driverData.vehicle_plate || ''}
+                onChange={(e) => setDriverData({ ...driverData, vehicle_plate: e.target.value })}
+              />
+              <Input
+                type="number"
+                label="Passenger seats"
+                min={1}
+                max={30}
+                inputMode="numeric"
+                value={driverData.vehicle_capacity ?? ''}
+                onChange={(e) => setDriverData({ ...driverData, vehicle_capacity: e.target.value === '' ? null : Number(e.target.value) })}
+              />
             </div>
 
-            <div className="mt-6">
-              <h3 className="font-medium text-gray-700 mb-1">Other Services</h3>
-              <p className="text-sm text-gray-500 mb-3">
-                Let passengers know what else you offer during off-hours — deliveries, errands, etc.
-              </p>
-              <div className="flex flex-wrap gap-2 mb-3">
+            <div className="mt-6 border-t border-line pt-5">
+              <p className="font-semibold">Other services</p>
+              <p className="mt-0.5 text-sm text-muted">Deliveries, errands, airport runs: anything you offer outside your trips.</p>
+              <div className="mt-3 flex flex-wrap gap-2">
                 {(driverData.skills || []).map((skill) => (
-                  <span
-                    key={skill}
-                    className="flex items-center gap-1 bg-blue-50 text-blue-700 text-sm px-3 py-1 rounded-full"
-                  >
+                  <span key={skill} className="inline-flex items-center gap-1 rounded-full bg-paper py-1 pl-3 pr-1 text-sm font-medium ring-1 ring-line">
                     {skill}
-                    <button onClick={() => removeSkill(skill)} className="text-blue-400 hover:text-blue-700">
+                    <button
+                      type="button"
+                      onClick={() => setDriverData({ ...driverData, skills: (driverData.skills || []).filter((s) => s !== skill) })}
+                      aria-label={`Remove ${skill}`}
+                      className="flex h-6 w-6 items-center justify-center rounded-full text-muted hover:bg-line hover:text-ink"
+                    >
                       ×
                     </button>
                   </span>
                 ))}
-                {(!driverData.skills || driverData.skills.length === 0) && (
-                  <span className="text-sm text-gray-400">No services added yet</span>
-                )}
+                {(!driverData.skills || driverData.skills.length === 0) && <span className="text-sm text-faint">None added yet.</span>}
               </div>
-              <div className="flex gap-2">
-                <input
+              <div className="mt-3 flex gap-2">
+                <Input
+                  aria-label="New service"
+                  wrapperClassName="flex-1"
                   value={skillInput}
                   onChange={(e) => setSkillInput(e.target.value)}
                   onKeyDown={(e) => {
@@ -372,101 +273,44 @@ export default function Profile() {
                     }
                   }}
                   placeholder="e.g. Package delivery"
-                  className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
-                <button
-                  type="button"
-                  onClick={addSkill}
-                  className="bg-gray-100 hover:bg-gray-200 text-gray-700 px-4 py-2 rounded-lg"
-                >
+                <Button variant="secondary" onClick={addSkill}>
                   Add
-                </button>
+                </Button>
               </div>
             </div>
-          </div>
+          </Section>
         )}
 
-        {message && <div className="p-3 bg-green-50 text-green-700 text-sm rounded-lg">{message}</div>}
-        {error && <div className="p-3 bg-red-50 text-red-600 text-sm rounded-lg">{error}</div>}
+        {error && <Notice>{error}</Notice>}
+        <Button type="submit" size="lg" block loading={saving}>
+          Save changes
+        </Button>
+      </form>
 
-        <button
-          onClick={saveProfile}
-          disabled={saving}
-          className="w-full bg-blue-600 text-white py-2 rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50"
-        >
-          {saving ? 'Saving...' : 'Save Changes'}
-        </button>
+      <div className="mt-8 space-y-4">
+        <Section title="Password">
+          <form onSubmit={changePassword} className="flex flex-col gap-3 sm:flex-row sm:items-start">
+            <Input
+              type="password"
+              aria-label="New password"
+              placeholder="New password"
+              autoComplete="new-password"
+              wrapperClassName="flex-1"
+              value={newPassword}
+              onChange={(e) => setNewPassword(e.target.value)}
+              error={passwordError || undefined}
+            />
+            <Button type="submit" variant="dark" loading={passwordSaving} disabled={!newPassword}>
+              Change password
+            </Button>
+          </form>
+        </Section>
 
-        {/* Ride history */}
-        <div className="bg-white rounded-lg shadow p-6">
-          <h2 className="font-semibold text-gray-800 mb-4">
-            {role === 'driver' ? 'Trip History' : 'Booking History'}
-          </h2>
-
-          {loadingHistory && <LoadingCar label="Loading history..." />}
-
-          {!loadingHistory && history.length === 0 && (
-            <p className="text-sm text-gray-500">Nothing here yet.</p>
-          )}
-
-          <div className="space-y-3">
-            {history.map((item) => {
-              const bookedSeats = role === 'driver' ? item.total_seats - item.available_seats : 0
-              const canRemove =
-                role === 'driver'
-                  ? (item.status === 'completed' || item.status === 'cancelled') && bookedSeats === 0
-                  : item.status === 'completed' || item.status === 'cancelled'
-
-              const parkName = role === 'driver' ? item.park?.name : item.trip?.park?.name
-              const destination = role === 'driver' ? item.route?.destination : item.trip?.route?.destination
-
-              return (
-                <div
-                  key={item.id}
-                  className="flex justify-between items-center text-sm border-b border-gray-100 pb-3"
-                >
-                  <button
-                    onClick={() => (role === 'driver' ? setDetailsTripId(item.id) : setDetailsBooking(item))}
-                    className="text-left hover:opacity-80"
-                  >
-                    <RouteLabel from={parkName || 'Unknown'} to={destination || 'Unknown'} size="sm" />
-                    <p className="text-gray-500 mt-1.5">
-                      {role === 'driver'
-                        ? `${item.departure_date} at ${item.departure_time?.slice(0, 5)}`
-                        : `${item.trip?.departure_date} at ${item.trip?.departure_time?.slice(0, 5)} · Ref: ${item.booking_reference}`}
-                    </p>
-                  </button>
-                  <div className="flex items-center gap-3">
-                    <span className="capitalize text-xs px-2 py-1 rounded-full bg-gray-100 text-gray-700">
-                      {item.status}
-                    </span>
-                    {canRemove && (
-                      <button
-                        onClick={() =>
-                          role === 'driver' ? deleteDriverTrip(item.id, bookedSeats) : deletePassengerBooking(item.id)
-                        }
-                        disabled={removingId === item.id}
-                        className="text-xs text-gray-400 hover:text-red-600 disabled:opacity-50"
-                      >
-                        {removingId === item.id ? '…' : 'Remove'}
-                      </button>
-                    )}
-                  </div>
-                </div>
-              )
-            })}
-          </div>
-        </div>
+        <Button variant="secondary" block onClick={handleSignOut}>
+          Sign out
+        </Button>
       </div>
-
-      {detailsTripId && <TripDetailsModal tripId={detailsTripId} onClose={() => setDetailsTripId(null)} />}
-      {detailsBooking && (
-        <BookingDetailsModal
-          booking={detailsBooking}
-          currentUserId={user!.id}
-          onClose={() => setDetailsBooking(null)}
-        />
-      )}
-    </div>
+    </PageContainer>
   )
 }

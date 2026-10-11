@@ -1,129 +1,171 @@
 import { Link } from 'react-router-dom'
+import { useQuery } from '@tanstack/react-query'
+import { supabase } from '../lib/supabase'
 import { useAuth } from '../hooks/useAuth'
-import { Nav } from '../components/Nav'
+import { LinkButton, buttonClasses } from '../components/ui/Button'
+import { formatTripDate, formatTripTime, formatXAF, isPastDeparture, todayISODate } from '../lib/format'
+import { TRIP_LIST_SELECT } from '../types/rows'
+import type { TripListRow } from '../types/rows'
 
-export default function LandingPage() {
-  const { user, role } = useAuth()
-
-  const primaryDestination = !user ? '/register' : role === 'driver' ? '/driver/dashboard' : '/trips'
+/** Live departure board: the next real trips, read straight from the database. */
+function DepartureBoard() {
+  const { data, isLoading } = useQuery({
+    queryKey: ['next-departures'],
+    staleTime: 60_000,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('trips')
+        .select(TRIP_LIST_SELECT)
+        .eq('status', 'scheduled')
+        .gt('available_seats', 0)
+        .gte('departure_date', todayISODate())
+        .order('departure_datetime', { ascending: true })
+        .limit(12)
+      if (error) throw error
+      return ((data || []) as unknown as TripListRow[]).filter((t) => !isPastDeparture(t.departure_date, t.departure_time)).slice(0, 5)
+    },
+  })
 
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
-      <Nav />
+    <div className="overflow-hidden rounded-3xl border border-white/10 bg-ink-soft">
+      <div className="flex items-center justify-between border-b border-white/10 px-5 py-3.5">
+        <p className="font-semibold text-white">Next departures</p>
+        <span className="flex items-center gap-1.5 text-xs font-medium text-white/60">
+          <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-taxi" aria-hidden="true" />
+          Live
+        </span>
+      </div>
 
-      {/* Hero */}
-      <section className="relative overflow-hidden">
-        <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 pt-16 pb-20 text-center">
-          <span className="inline-block text-xs font-semibold tracking-wide uppercase text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/30 px-3 py-1 rounded-full mb-6">
-            Built for Cameroon's taxi parks
-          </span>
-          <h1 className="text-4xl sm:text-5xl font-extrabold text-gray-900 dark:text-gray-50 tracking-tight leading-tight">
-            Book your seat
-            <br />
-            <span className="text-blue-600">before you get to the park.</span>
-          </h1>
-          <p className="mt-5 text-lg text-gray-600 dark:text-gray-300 max-w-2xl mx-auto">
-            Ride Along lists real scheduled departures from real drivers at your local park —
-            so you know the time, the price, and the seats left, before you leave the house.
-          </p>
-          <div className="mt-8 flex flex-col sm:flex-row gap-3 justify-center">
-            <Link
-              to={primaryDestination}
-              className="bg-blue-600 text-white px-6 py-3 rounded-lg font-medium hover:bg-blue-700 transition-colors"
-            >
-              {!user ? 'Get Started' : role === 'driver' ? 'Go to My Trips' : 'Find a Trip'}
-            </Link>
-            {!user && (
-              <Link
-                to="/login"
-                className="border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 px-6 py-3 rounded-lg font-medium hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
-              >
-                Sign In
-              </Link>
-            )}
-          </div>
+      {isLoading && (
+        <div className="space-y-px">
+          {[0, 1, 2].map((i) => (
+            <div key={i} className="h-[68px] animate-pulse bg-white/[0.03]" />
+          ))}
         </div>
+      )}
 
-        {/* Signature element: a route line with stops */}
-        <div className="max-w-3xl mx-auto px-4 pb-6">
-          <div className="relative flex items-center justify-between">
-            <div className="absolute left-0 right-0 h-0.5 bg-amber-300 dark:bg-amber-700" />
-            {['Park', 'On the way', 'Destination'].map((label, i) => (
-              <div key={label} className="relative flex flex-col items-center gap-2 bg-gray-50 dark:bg-gray-900 px-2">
-                <div
-                  className={`w-3 h-3 rounded-full ${
-                    i === 0 ? 'bg-amber-500' : i === 2 ? 'bg-blue-600' : 'bg-amber-300 dark:bg-amber-700'
-                  }`}
-                />
-                <span className="text-xs text-gray-500 dark:text-gray-400">{label}</span>
+      {!isLoading && (!data || data.length === 0) && (
+        <div className="px-5 py-10 text-center">
+          <p className="font-semibold text-white">No departures posted right now</p>
+          <p className="mt-1 text-sm text-white/60">Drivers post trips through the day. Check back soon.</p>
+        </div>
+      )}
+
+      <ul>
+        {(data || []).map((trip) => (
+          <li key={trip.id} className="grid grid-cols-[auto_1fr_auto] items-center gap-4 border-b border-white/5 px-5 py-3 last:border-0">
+            <div className="w-[68px]">
+              <p className="font-condensed text-[28px] font-extrabold leading-none text-taxi">{formatTripTime(trip.departure_time)}</p>
+              <p className="mt-1 text-[11px] font-medium text-white/50">{formatTripDate(trip.departure_date)}</p>
+            </div>
+            <div className="min-w-0">
+              <p className="truncate font-semibold text-white">{trip.route?.destination}</p>
+              <p className="truncate text-sm text-white/55">from {trip.park?.name}</p>
+            </div>
+            <div className="text-right">
+              <p className="text-sm font-semibold text-white">{formatXAF(trip.price_per_seat)}</p>
+              <p className={`text-xs ${trip.available_seats <= 2 ? 'text-taxi' : 'text-white/55'}`}>
+                {trip.available_seats} {trip.available_seats === 1 ? 'seat' : 'seats'} left
+              </p>
+            </div>
+          </li>
+        ))}
+      </ul>
+
+      <Link to="/trips" className="block border-t border-white/10 px-5 py-3.5 text-center text-sm font-semibold text-taxi hover:bg-white/5">
+        See all trips
+      </Link>
+    </div>
+  )
+}
+
+const STEPS = [
+  {
+    title: 'Find your departure',
+    text: 'See trips leaving your park with the time, the price per seat and how many seats are left.',
+  },
+  {
+    title: 'Book your seat',
+    text: 'Reserve one or more seats in a few taps and get a booking reference to show the driver.',
+  },
+  {
+    title: 'Ride with confidence',
+    text: 'Message or call your driver, and follow them on a live map once the trip leaves.',
+  },
+]
+
+export default function LandingPage() {
+  const { user, role, homePath } = useAuth()
+
+  return (
+    <>
+      {/* Hero: continues the ink header so the board reads as part of the park */}
+      <section className="bg-ink text-white">
+        <div className="mx-auto grid max-w-6xl items-center gap-10 px-4 pb-14 pt-8 sm:px-6 md:grid-cols-[1.1fr_1fr] md:pb-20 md:pt-14">
+          <div>
+            <h1 className="font-semi-condensed text-[42px] font-extrabold leading-[1.02] tracking-tight sm:text-[56px]">
+              Your seat is booked before you reach the park.
+            </h1>
+            <p className="mt-5 max-w-lg text-lg text-white/70">
+              Ride Along shows real departures from drivers around Bamenda, so you know the time, the price and the seats left before you leave home.
+            </p>
+            <div className="mt-8 flex flex-col gap-3 sm:flex-row">
+              {user ? (
+                <LinkButton to={homePath} size="lg">
+                  {role === 'driver' ? 'Go to my trips' : 'Find a trip'}
+                </LinkButton>
+              ) : (
+                <>
+                  <LinkButton to="/trips" size="lg">
+                    Find a trip
+                  </LinkButton>
+                  <Link to="/register?role=driver" className={buttonClasses('ghost', 'lg', 'border border-white/25 text-white hover:bg-white/10')}>
+                    I’m a driver
+                  </Link>
+                </>
+              )}
+            </div>
+          </div>
+          <DepartureBoard />
+        </div>
+      </section>
+
+      {/* How it works: a real sequence, so the steps are numbered */}
+      <section className="mx-auto max-w-6xl px-4 py-16 sm:px-6 md:py-20">
+        <h2 className="font-semi-condensed text-3xl font-extrabold tracking-tight">How it works</h2>
+        <ol className="mt-8 grid gap-8 md:grid-cols-3">
+          {STEPS.map((step, i) => (
+            <li key={step.title} className="flex gap-4">
+              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-taxi font-condensed text-lg font-extrabold text-ink">
+                {i + 1}
+              </span>
+              <div>
+                <h3 className="text-lg font-bold">{step.title}</h3>
+                <p className="mt-1.5 text-[15px] leading-relaxed text-muted">{step.text}</p>
               </div>
-            ))}
-          </div>
-        </div>
+            </li>
+          ))}
+        </ol>
       </section>
 
-      {/* Features */}
-      <section className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-16">
-        <div className="grid gap-8 md:grid-cols-3">
-          <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
-            <div className="text-2xl mb-3">🕒</div>
-            <h3 className="font-semibold text-gray-900 dark:text-gray-50 mb-2">See real departure times</h3>
-            <p className="text-sm text-gray-600 dark:text-gray-300">
-              Drivers publish their schedule in advance, so you're not guessing when the next bus leaves.
-            </p>
+      {/* Drivers */}
+      {role !== 'passenger' && (
+        <section className="mx-auto max-w-6xl px-4 pb-16 sm:px-6 md:pb-24">
+          <div className="grid items-center gap-8 rounded-3xl bg-taxi p-6 text-ink sm:p-10 md:grid-cols-[1.4fr_1fr]">
+            <div>
+              <h2 className="font-semi-condensed text-3xl font-extrabold tracking-tight sm:text-4xl">Drive a taxi? Fill your seats faster.</h2>
+              <p className="mt-3 max-w-xl text-[17px] text-ink/75">
+                Post your next departure and passengers book before you load. See who’s coming, call or message them, and track what you earn.
+              </p>
+            </div>
+            <div className="md:text-right">
+              <LinkButton to={user ? homePath : '/register?role=driver'} variant="dark" size="lg">
+                {role === 'driver' ? 'Post a trip' : 'Start driving with Ride Along'}
+              </LinkButton>
+            </div>
           </div>
-          <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
-            <div className="text-2xl mb-3">💺</div>
-            <h3 className="font-semibold text-gray-900 dark:text-gray-50 mb-2">Reserve your seat</h3>
-            <p className="text-sm text-gray-600 dark:text-gray-300">
-              Book ahead and skip standing around the park waiting for a vehicle to fill up.
-            </p>
-          </div>
-          <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
-            <div className="text-2xl mb-3">✅</div>
-            <h3 className="font-semibold text-gray-900 dark:text-gray-50 mb-2">Ride with rated drivers</h3>
-            <p className="text-sm text-gray-600 dark:text-gray-300">
-              Verified drivers and passenger ratings help you know who you're riding with.
-            </p>
-          </div>
-        </div>
-      </section>
-
-      {/* CTA */}
-      <section className="bg-blue-600">
-        <div className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 py-14 text-center">
-          <h2 className="text-2xl sm:text-3xl font-bold text-white mb-3">
-            {!user ? 'Ready to skip the wait?' : role === 'driver' ? 'Manage your next departure' : 'Your next trip is a search away'}
-          </h2>
-          <Link
-            to={primaryDestination}
-            className="inline-block mt-2 bg-white text-blue-600 px-6 py-3 rounded-lg font-medium hover:bg-gray-100 transition-colors"
-          >
-            {!user ? 'Create Free Account' : role === 'driver' ? 'Go to My Trips' : 'Browse Trips'}
-          </Link>
-        </div>
-      </section>
-
-      <footer className="border-t border-gray-200 dark:border-gray-800">
-  <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-6 flex flex-col sm:flex-row justify-between items-center gap-2 text-sm text-gray-500 dark:text-gray-400">
-    <span>🚗 Ride Along</span>
-    <div className="flex flex-wrap items-center justify-center gap-2">
-      <span>Version 1.0</span>
-      <span className="hidden sm:inline text-gray-300 dark:text-gray-700">|</span>
-      <span>
-  A Product by{' '}
-  <a 
-    href="https://asghinlabs.vercel.app/" 
-    target="_blank" 
-    rel="noopener noreferrer"
-    className="text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300 hover:underline transition-all duration-200 font-medium"
-  >
-    AsghinLabs
-  </a>
-</span>
-    </div>
-  </div>
-</footer>
-    </div>
+        </section>
+      )}
+    </>
   )
 }

@@ -1,16 +1,32 @@
-import { useState } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { useEffect, useState } from 'react'
+import type { FormEvent } from 'react'
+import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { isEmailFormat, isValidCameroonPhone, normalizePhoneInput } from '../lib/phone'
+import { getErrorMessage } from '../lib/errors'
+import { useAuth, homePathForRole } from '../hooks/useAuth'
+import { AuthShell } from '../components/AuthShell'
+import { Button } from '../components/ui/Button'
+import { Input, Notice } from '../components/ui/Field'
 
 function Login() {
   const navigate = useNavigate()
+  const location = useLocation()
+  const { user, homePath, loading: authLoading } = useAuth()
+  const from = (location.state as { from?: string } | null)?.from
+
   const [identifier, setIdentifier] = useState('')
   const [password, setPassword] = useState('')
+  const [showPassword, setShowPassword] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
 
-  const handleLogin = async (e: React.FormEvent) => {
+  // Already signed in? Skip the form.
+  useEffect(() => {
+    if (!authLoading && user && !loading) navigate(from || homePath, { replace: true })
+  }, [authLoading, user, loading, from, homePath, navigate])
+
+  const handleLogin = async (e: FormEvent) => {
     e.preventDefault()
     setLoading(true)
     setError('')
@@ -20,102 +36,90 @@ function Login() {
       let authEmail: string
 
       if (isEmailFormat(trimmed)) {
-        authEmail = trimmed
+        authEmail = trimmed.toLowerCase()
       } else {
-        const normalizedPhone = normalizePhoneInput(trimmed)
-        if (!isValidCameroonPhone(normalizedPhone)) {
-          throw new Error('Enter a valid phone number (e.g. 670 922 913) or email address')
+        const phone = normalizePhoneInput(trimmed)
+        if (!isValidCameroonPhone(phone)) {
+          throw new Error('Enter a valid phone number (e.g. 670 922 913) or email address.')
         }
-
-        // The account's real Supabase Auth email might be a synthetic
-        // "@ridealong.com" address (phone-only signup) or the user's real
-        // email (if they also provided one at registration). Look up which
-        // one it actually is instead of guessing, so login works either way.
-        const { data: lookedUpEmail, error: lookupError } = await supabase.rpc(
-          'get_auth_email_for_phone',
-          { p_phone: normalizedPhone }
-        )
-
-        if (lookupError || !lookedUpEmail) {
-          throw new Error('No account found for this phone number')
-        }
-
-        authEmail = lookedUpEmail as string
+        // The account's sign-in email is either the user's real email or a
+        // synthetic one made from their phone; look up which.
+        const { data: lookedUp, error: lookupError } = await supabase.rpc('get_auth_email_for_phone', { p_phone: phone })
+        if (lookupError || !lookedUp) throw new Error('No account uses this phone number. Check it or create an account.')
+        authEmail = lookedUp as string
       }
 
-      const { error: signInError } = await supabase.auth.signInWithPassword({
-        email: authEmail,
-        password,
-      })
-
+      const { data, error: signInError } = await supabase.auth.signInWithPassword({ email: authEmail, password })
       if (signInError) throw signInError
-      navigate('/')
+
+      const { data: profile } = await supabase.from('users').select('role').eq('id', data.user.id).maybeSingle()
+      navigate(from || homePathForRole((profile as unknown as { role?: 'passenger' | 'driver' | 'admin' } | null)?.role), { replace: true })
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Login failed')
-    } finally {
+      setError(getErrorMessage(err, 'Sign in failed. Try again.'))
       setLoading(false)
     }
   }
 
   return (
-    <div className="min-h-screen bg-gray-100 flex items-center justify-center p-4">
-      <div className="bg-white p-8 rounded-lg shadow-lg max-w-md w-full">
-        <div className="text-center mb-8">
-          <h1 className="text-3xl font-bold text-blue-600">🚗 Ride Along</h1>
-          <p className="text-gray-600 mt-2">Sign in to your account</p>
-        </div>
+    <AuthShell
+      title="Welcome back"
+      subtitle={from === '/trips' ? 'Sign in to book your seat.' : 'Sign in with your phone number or email.'}
+      footer={
+        <>
+          New to Ride Along?{' '}
+          <Link to="/register" state={location.state} className="font-semibold text-ink underline decoration-taxi decoration-2 underline-offset-4">
+            Create an account
+          </Link>
+        </>
+      }
+    >
+      <form onSubmit={handleLogin} className="space-y-4">
+        <Input
+          label="Phone number or email"
+          value={identifier}
+          onChange={(e) => setIdentifier(e.target.value)}
+          placeholder="670 922 913"
+          autoComplete="username"
+          required
+        />
 
-        {error && (
-          <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded mb-4">
-            {error}
-          </div>
-        )}
-
-        <form onSubmit={handleLogin}>
-          <div className="mb-4">
-            <label className="block text-gray-700 text-sm font-bold mb-2">
-              Phone or Email
-            </label>
-            <input
-              type="text"
-              value={identifier}
-              onChange={(e) => setIdentifier(e.target.value)}
-              placeholder="670 922 913 or you@email.com"
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-              required
-            />
-          </div>
-
-          <div className="mb-6">
-            <label className="block text-gray-700 text-sm font-bold mb-2">
+        <div>
+          <div className="mb-1.5 flex items-baseline justify-between">
+            <label htmlFor="login-password" className="text-sm font-medium">
               Password
             </label>
-            <input
-              type="password"
+            <Link to="/forgot-password" className="text-sm font-medium text-muted hover:text-ink">
+              Forgot password?
+            </Link>
+          </div>
+          <div className="relative">
+            <Input
+              id="login-password"
+              type={showPassword ? 'text' : 'password'}
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+              autoComplete="current-password"
+              className="pr-16"
               required
             />
+            <button
+              type="button"
+              onClick={() => setShowPassword((s) => !s)}
+              className="absolute inset-y-0 right-0 px-3.5 text-sm font-semibold text-muted hover:text-ink"
+              aria-label={showPassword ? 'Hide password' : 'Show password'}
+            >
+              {showPassword ? 'Hide' : 'Show'}
+            </button>
           </div>
+        </div>
 
-          <button
-            type="submit"
-            disabled={loading}
-            className="w-full bg-blue-600 text-white py-2 rounded-lg hover:bg-blue-700 transition-colors font-medium disabled:opacity-50"
-          >
-            {loading ? 'Signing in...' : 'Sign In'}
-          </button>
-        </form>
+        {error && <Notice>{error}</Notice>}
 
-        <p className="text-center text-gray-600 mt-4">
-          Don't have an account?{' '}
-          <Link to="/register" className="text-blue-600 hover:underline">
-            Register
-          </Link>
-        </p>
-      </div>
-    </div>
+        <Button type="submit" size="lg" block loading={loading}>
+          Sign in
+        </Button>
+      </form>
+    </AuthShell>
   )
 }
 

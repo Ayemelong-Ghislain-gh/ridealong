@@ -1,1 +1,113 @@
 @import "tailwindcss";
+
+/*
+  Ride Along design tokens.
+  Taxi yellow is the one signature colour: primary actions and departure times.
+  Everything else stays quiet on an asphalt-ink and off-white base.
+*/
+@theme {
+  --font-sans: "Archivo", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+
+  --color-ink: #1c2321;
+  --color-ink-soft: #2c3532;
+  --color-muted: #5b6560;
+  --color-faint: #8a938e;
+  --color-line: #e2e5e2;
+  --color-paper: #f5f6f4;
+  --color-card: #ffffff;
+
+  --color-taxi: #f2b705;
+  --color-taxi-dark: #c99600;
+  --color-taxi-soft: #fdf3cf;
+
+  --color-route: #1f7a5a;
+  --color-route-soft: #e2f1ea;
+
+  --color-danger: #c0392b;
+  --color-danger-soft: #fbe9e7;
+
+  --color-info: #2b5d8a;
+  --color-info-soft: #e5eef6;
+}
+
+/* Condensed and wide cuts of Archivo, used for times and headlines */
+@utility font-condensed {
+  font-stretch: 75%;
+}
+@utility font-semi-condensed {
+  font-stretch: 87.5%;
+}
+@utility font-wide {
+  font-stretch: 112.5%;
+}
+
+@layer base {
+  html {
+    -webkit-tap-highlight-color: transparent;
+    color-scheme: light;
+  }
+
+  body {
+    background-color: var(--color-paper);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    font-feature-settings: "tnum" 1;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-taxi-dark);
+    outline-offset: 2px;
+  }
+
+  button:not(:disabled),
+  [role="button"]:not(:disabled) {
+    cursor: pointer;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+@keyframes sheet-up {
+  from {
+    transform: translateY(16px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.animate-sheet-up {
+  animation: sheet-up 180ms ease-out;
+}
+
+.animate-fade-in {
+  animation: fade-in 150ms ease-out;
+}
+
+/* Leaflet map sits under our modals and sticky bars */
+.leaflet-container {
+  z-index: 0;
+  font-family: var(--font-sans);
+}
