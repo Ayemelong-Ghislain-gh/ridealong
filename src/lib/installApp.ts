@@ -97,15 +97,25 @@ export const ANDROID_APK_URL = '/downloads/RideAlong.apk'
 let apkCheck: Promise<boolean> | null = null
 
 /**
- * True once the APK has been added to the site. Checked once per visit.
- * Without the file, the site's catch-all route would return the web page
- * instead, so the content type is checked rather than just the status.
+ * True only when a real Android app file is published at ANDROID_APK_URL.
+ * Every APK is a zip file, so it starts with the bytes "PK". Checking those
+ * first bytes is reliable: if the file is missing, the site returns its
+ * home page instead, which starts with "<!doctype".
  */
 export function apkIsAvailable(): Promise<boolean> {
   if (!apkCheck) {
-    apkCheck = fetch(ANDROID_APK_URL, { method: 'HEAD', cache: 'no-store' })
-      .then((res) => res.ok && !(res.headers.get('content-type') || '').includes('text/html'))
-      .catch(() => false)
+    apkCheck = (async () => {
+      try {
+        const res = await fetch(ANDROID_APK_URL, { headers: { Range: 'bytes=0-3' }, cache: 'no-store' })
+        if (!res.ok || !res.body) return false
+        const reader = res.body.getReader()
+        const { value } = await reader.read()
+        void reader.cancel() // don't download the rest
+        return !!value && value.length >= 2 && value[0] === 0x50 && value[1] === 0x4b
+      } catch {
+        return false
+      }
+    })()
   }
   return apkCheck
 }
