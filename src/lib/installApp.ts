@@ -90,3 +90,22 @@ export function registerServiceWorker() {
     navigator.serviceWorker.register('/sw.js').catch((err) => console.warn('Service worker not registered:', err))
   })
 }
+
+/** Where the Android app file is published (put it in public/downloads/). */
+export const ANDROID_APK_URL = '/downloads/RideAlong.apk'
+
+let apkCheck: Promise<boolean> | null = null
+
+/**
+ * True once the APK has been added to the site. Checked once per visit.
+ * Without the file, the site's catch-all route would return the web page
+ * instead, so the content type is checked rather than just the status.
+ */
+export function apkIsAvailable(): Promise<boolean> {
+  if (!apkCheck) {
+    apkCheck = fetch(ANDROID_APK_URL, { method: 'HEAD', cache: 'no-store' })
+      .then((res) => res.ok && !(res.headers.get('content-type') || '').includes('text/html'))
+      .catch(() => false)
+  }
+  return apkCheck
+}

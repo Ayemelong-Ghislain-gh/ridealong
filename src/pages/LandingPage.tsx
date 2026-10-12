@@ -127,7 +127,7 @@ export default function LandingPage() {
               )}
             </div>
             <div className="mt-5">
-              <InstallAppButton variant="onDark" className="-ml-4" label="Download the mobile app" />
+              <InstallAppButton variant="onDark" className="-ml-4" label="Install the app" />
             </div>
           </div>
           <DepartureBoard />
