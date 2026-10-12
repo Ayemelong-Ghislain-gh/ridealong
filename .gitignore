@@ -28,3 +28,9 @@ dev-dist
 *.njsproj
 *.sln
 *.sw?
+
+# Android signing files from PWABuilder: NEVER upload these
+android-package/
+*.keystore
+*.jks
+signing-key-info.txt

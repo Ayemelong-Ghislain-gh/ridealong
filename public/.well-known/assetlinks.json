@@ -1,0 +1,8 @@
+[{
+      "relation": ["delegate_permission/common.handle_all_urls"],
+      "target": {
+        "namespace": "android_app",
+        "package_name": "com.asghinlabs.ridealong",
+        "sha256_cert_fingerprints": ["86:C3:27:2E:48:1C:C3:33:06:9B:84:45:BF:31:26:02:FE:4F:EF:C6:0F:5C:3A:52:D8:59:0B:F5:5E:23:07:F2"]
+      }
+    }]
