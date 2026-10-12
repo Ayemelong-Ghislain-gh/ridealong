@@ -4,6 +4,7 @@ import type { ReactNode } from 'react'
 import { Nav, MobileTabBar } from './Nav'
 import { useAuth } from '../hooks/useAuth'
 import { APP_VERSION } from '../lib/config'
+import { InstallAppButton } from './InstallAppButton'
 
 export function AppLayout() {
   const { user } = useAuth()
@@ -34,7 +35,10 @@ function Footer() {
   return (
     <footer className={`border-t border-line bg-card ${user ? 'hidden md:block' : ''}`}>
       <div className="mx-auto flex max-w-6xl flex-col items-center justify-between gap-2 px-4 py-6 text-sm text-muted sm:flex-row sm:px-6">
-        <span>Ride Along {APP_VERSION}</span>
+        <span className="flex items-center gap-4">
+          <span>Ride Along {APP_VERSION}</span>
+          <InstallAppButton asLink />
+        </span>
         <span>
           A product by{' '}
           <a href="https://asghinlabs.vercel.app/" target="_blank" rel="noopener noreferrer" className="font-semibold text-ink underline decoration-taxi decoration-2 underline-offset-4 hover:decoration-ink">

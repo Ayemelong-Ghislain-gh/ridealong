@@ -9,6 +9,8 @@ import { LoadingCar } from '../components/LoadingCar'
 import { Button } from '../components/ui/Button'
 import { Input, Notice } from '../components/ui/Field'
 import { Avatar, Badge, Card, Stars, VerifiedMark } from '../components/ui/Display'
+import { InstallAppButton } from '../components/InstallAppButton'
+import { useInstallApp } from '../lib/installApp'
 import { isValidCameroonPhone, normalizePhoneInput } from '../lib/phone'
 import { getErrorMessage } from '../lib/errors'
 import type { DriverProfileInfo } from '../types/rows'
@@ -34,6 +36,7 @@ export default function Profile() {
   const { toast } = useFeedback()
   const navigate = useNavigate()
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const { installed } = useInstallApp()
 
   const [fullName, setFullName] = useState('')
   const [phone, setPhone] = useState('')
@@ -306,6 +309,12 @@ export default function Profile() {
             </Button>
           </form>
         </Section>
+
+        {!installed && (
+          <Section title="Get the app" description="Add Ride Along to your home screen for one-tap access to your trips.">
+            <InstallAppButton variant="dark" />
+          </Section>
+        )}
 
         <Button variant="secondary" block onClick={handleSignOut}>
           Sign out

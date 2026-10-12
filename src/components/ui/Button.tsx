@@ -2,7 +2,7 @@ import type { ComponentProps, ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import type { LinkProps } from 'react-router-dom'
 
-export type ButtonVariant = 'primary' | 'secondary' | 'ghost' | 'danger' | 'dark'
+export type ButtonVariant = 'primary' | 'secondary' | 'ghost' | 'danger' | 'dark' | 'onDark'
 export type ButtonSize = 'sm' | 'md' | 'lg'
 
 const VARIANTS: Record<ButtonVariant, string> = {
@@ -11,6 +11,7 @@ const VARIANTS: Record<ButtonVariant, string> = {
   ghost: 'text-ink hover:bg-ink/5',
   danger: 'bg-danger text-white hover:bg-[#a93226]',
   dark: 'bg-ink text-white hover:bg-ink-soft',
+  onDark: 'text-taxi hover:bg-white/10',
 }
 
 const SIZES: Record<ButtonSize, string> = {

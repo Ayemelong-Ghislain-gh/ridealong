@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../hooks/useAuth'
 import { LinkButton, buttonClasses } from '../components/ui/Button'
+import { InstallAppButton } from '../components/InstallAppButton'
 import { formatTripDate, formatTripTime, formatXAF, isPastDeparture, todayISODate } from '../lib/format'
 import { TRIP_LIST_SELECT } from '../types/rows'
 import type { TripListRow } from '../types/rows'
@@ -124,6 +125,9 @@ export default function LandingPage() {
                   </Link>
                 </>
               )}
+            </div>
+            <div className="mt-5">
+              <InstallAppButton variant="onDark" className="-ml-4" label="Download the mobile app" />
             </div>
           </div>
           <DepartureBoard />

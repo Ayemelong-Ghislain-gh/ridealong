@@ -1,0 +1,22 @@
+{
+  "id": "/",
+  "name": "Ride Along",
+  "short_name": "Ride Along",
+  "description": "Book your seat on taxis leaving Bamenda's parks.",
+  "start_url": "/?source=app",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#1C2321",
+  "theme_color": "#1C2321",
+  "categories": ["travel", "navigation"],
+  "icons": [
+    { "src": "/icons/192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "shortcuts": [
+    { "name": "Find a trip", "url": "/trips", "icons": [{ "src": "/icons/192.png", "sizes": "192x192" }] },
+    { "name": "My bookings", "url": "/passenger/bookings", "icons": [{ "src": "/icons/192.png", "sizes": "192x192" }] }
+  ]
+}
