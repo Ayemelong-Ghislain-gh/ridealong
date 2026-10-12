@@ -99,7 +99,7 @@ function downloadFile(url: string, filename: string) {
  * Screen steps, the only way Apple allows outside the App Store.
  */
 export function InstallAppButton({ variant = 'secondary', size = 'md', className = '', asLink = false, label = 'Install app' }: InstallAppButtonProps) {
-  const { installed } = useInstallApp()
+  const { installed, canPrompt } = useInstallApp()
   const { toast } = useFeedback()
   const [open, setOpen] = useState(false)
   const [view, setView] = useState<View>('choose')
@@ -108,6 +108,8 @@ export function InstallAppButton({ variant = 'secondary', size = 'md', className
   if (installed) return null
 
   const platform = detectPlatform()
+  // WhatsApp, Facebook, DeepSeek and similar open links in their own browser, which can't install apps
+  const inAppBrowser = /wv\)|FBAN|FBAV|Instagram|WhatsApp|Line\/|; wv/i.test(navigator.userAgent)
 
   const openModal = () => {
     void apkIsAvailable() // check early so the Android tap responds instantly
@@ -116,15 +118,9 @@ export function InstallAppButton({ variant = 'secondary', size = 'md', className
   }
 
   const handleAndroid = async () => {
-    setBusy(true)
-    try {
-      // 1. The real app file, once it has been added to the site
-      if (await apkIsAvailable()) {
-        downloadFile(ANDROID_APK_URL, 'RideAlong.apk')
-        setView('android-started')
-        return
-      }
-      // 2. Otherwise Chrome's own one-tap install (only works on the Android phone itself)
+    // 1. Chrome's own one-tap install. It must start straight from the tap
+    //    (no waiting on the network first) or Chrome silently refuses it.
+    if (canPrompt) {
       const result = await promptInstall()
       if (result === 'accepted') {
         toast('Ride Along is installed. Find it with your other apps.')
@@ -132,11 +128,20 @@ export function InstallAppButton({ variant = 'secondary', size = 'md', className
         return
       }
       if (result === 'dismissed') return
-      // 3. Neither available (other browser, or on a computer)
-      setView('android-manual')
-    } finally {
-      setBusy(false)
     }
+
+    // 2. The app file, once it has been published on the site
+    setBusy(true)
+    const hasApk = await apkIsAvailable()
+    setBusy(false)
+    if (hasApk) {
+      downloadFile(ANDROID_APK_URL, 'RideAlong.apk')
+      setView('android-started')
+      return
+    }
+
+    // 3. Neither available: explain how to install from Chrome's menu
+    setView('android-manual')
   }
 
   const title =
@@ -228,17 +233,25 @@ export function InstallAppButton({ variant = 'secondary', size = 'md', className
 
           {view === 'android-manual' && (
             <>
+              {inAppBrowser && (
+                <p className="mb-5 rounded-xl bg-taxi-soft px-4 py-3 text-sm text-[#7a5c00]">
+                  You’re viewing this inside another app. Open <strong>{window.location.host}</strong> in <strong>Chrome</strong> first.
+                </p>
+              )}
               <ol className="space-y-4">
                 <Step n={1}>
-                  On your Android phone, open <strong>{window.location.host}</strong> in <strong>Chrome</strong>.
+                  In <strong>Chrome</strong>, tap the <strong>⋮</strong> menu at the top right.
                 </Step>
                 <Step n={2}>
-                  Tap <strong>Install app</strong>, then <strong>Android</strong>.
+                  Tap <strong>Install app</strong> or <strong>Add to Home screen</strong>.
                 </Step>
                 <Step n={3}>
-                  If nothing appears, tap Chrome’s <strong>⋮</strong> menu, then <strong>Install app</strong>.
+                  Tap <strong>Install</strong>. Ride Along appears with your other apps.
                 </Step>
               </ol>
+              <p className="mt-6 rounded-xl bg-paper px-4 py-3 text-sm text-muted">
+                Already installed? Look for the yellow Ride Along icon with your apps.
+              </p>
             </>
           )}
         </Modal>

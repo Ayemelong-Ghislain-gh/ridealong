@@ -51,9 +51,13 @@ export function detectPlatform(): InstallPlatform {
 export async function promptInstall(): Promise<'accepted' | 'dismissed' | 'unavailable'> {
   if (!deferredPrompt) return 'unavailable'
   const event = deferredPrompt
+  try {
+    await event.prompt()
+  } catch {
+    return 'unavailable' // Chrome refused (e.g. not started by a tap); keep the event for another try
+  }
   deferredPrompt = null // each prompt can only be used once
   notify()
-  await event.prompt()
   const { outcome } = await event.userChoice
   if (outcome === 'accepted') installed = true
   notify()
