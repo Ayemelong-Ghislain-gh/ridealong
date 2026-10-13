@@ -1,10 +1,12 @@
 import { Outlet, useLocation } from 'react-router-dom'
-import { useEffect } from 'react'
+import { Suspense, useEffect } from 'react'
 import type { ReactNode } from 'react'
 import { Nav, MobileTabBar } from './Nav'
 import { useAuth } from '../hooks/useAuth'
 import { APP_VERSION } from '../lib/config'
 import { InstallAppButton } from './InstallAppButton'
+import { LoadingCar } from './LoadingCar'
+import { Link } from 'react-router-dom'
 
 export function AppLayout() {
   const { user } = useAuth()
@@ -22,7 +24,9 @@ export function AppLayout() {
       </a>
       <Nav />
       <main id="main" className={`flex-1 ${user ? 'pb-24 md:pb-0' : ''}`}>
-        <Outlet />
+        <Suspense fallback={<LoadingCar label="Loading..." />}>
+          <Outlet />
+        </Suspense>
       </main>
       <Footer />
       <MobileTabBar />
@@ -38,6 +42,14 @@ function Footer() {
         <span className="flex items-center gap-4">
           <span>Ride Along {APP_VERSION}</span>
           <InstallAppButton asLink />
+        </span>
+        <span className="flex items-center gap-4">
+          <Link to="/privacy" className="hover:text-ink">
+            Privacy
+          </Link>
+          <Link to="/delete-account" className="hover:text-ink">
+            Delete account
+          </Link>
         </span>
         <span>
           A product by{' '}

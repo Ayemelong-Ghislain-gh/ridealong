@@ -55,7 +55,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // profile (and role) is known, so nobody is redirected by mistake.
     if (loadedFor.current !== authUser.id) setLoading(true)
 
-    const { data, error } = await supabase.from('users').select('*').eq('id', authUser.id).maybeSingle()
+    // get_my_profile returns your own row including phone and email, which
+    // other users can't read (see supabase/ridealong_privacy.sql)
+    let { data, error } = await supabase.rpc('get_my_profile').maybeSingle()
+    if (error) {
+      // Database not updated yet (function missing): fall back to the old way
+      const fallback = await supabase.from('users').select('*').eq('id', authUser.id).maybeSingle()
+      data = fallback.data as typeof data
+      error = fallback.error
+    }
     if (error) console.error('Failed to load user profile:', error.message)
     loadedFor.current = authUser.id
     setProfile((data as unknown as User | null) ?? null)

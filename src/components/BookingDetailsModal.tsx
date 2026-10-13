@@ -1,12 +1,15 @@
-import { useState } from 'react'
+import { lazy, Suspense, useState } from 'react'
 import { Modal } from './ui/Modal'
 import { Button } from './ui/Button'
 import { Avatar, BookingStatusBadge, TripStatusBadge } from './ui/Display'
 import { ChatModal } from './ChatModal'
-import { LiveLocationMap } from './LiveLocationMap'
 import { RouteLabel } from './RouteLabel'
 import { formatTripDate, formatTripTime, formatXAF, plural } from '../lib/format'
 import type { BookingRow } from '../types/rows'
+import { useContactPhones } from '../hooks/useContactPhones'
+
+// The map library is large; only download it when a trip is actually on the road
+const LiveLocationMap = lazy(() => import('./LiveLocationMap').then((m) => ({ default: m.LiveLocationMap })))
 
 interface BookingDetailsModalProps {
   booking: BookingRow
@@ -21,6 +24,8 @@ export function BookingDetailsModal({ booking, currentUserId, onClose }: Booking
   const total = (trip?.price_per_seat || 0) * booking.seats_booked
   const isActive = booking.status === 'confirmed'
   const onTheRoad = isActive && trip?.status === 'departed'
+  const { data: phones } = useContactPhones([trip?.driver_id], isActive)
+  const driverPhone = trip ? phones?.[trip.driver_id] : undefined
 
   return (
     <Modal title="Booking details" onClose={onClose}>
@@ -55,9 +60,9 @@ export function BookingDetailsModal({ booking, currentUserId, onClose }: Booking
             <p className="truncate font-semibold">{driverName}</p>
             <p className="text-sm text-muted">Your driver</p>
           </div>
-          {isActive && trip.driver.phone && (
+          {isActive && driverPhone && (
             <a
-              href={`tel:${trip.driver.phone}`}
+              href={`tel:${driverPhone}`}
               className="flex h-10 items-center rounded-full border border-line px-4 text-sm font-semibold hover:border-ink/30"
             >
               Call
@@ -71,7 +76,9 @@ export function BookingDetailsModal({ booking, currentUserId, onClose }: Booking
           <div className="mt-5">
             <p className="mb-2 text-sm font-semibold">Where’s my driver?</p>
             {onTheRoad ? (
-              <LiveLocationMap driverId={trip.driver_id} driverName={driverName} />
+              <Suspense fallback={<div className="flex h-56 items-center justify-center rounded-xl bg-paper text-sm text-muted">Loading map...</div>}>
+                <LiveLocationMap driverId={trip.driver_id} driverName={driverName} />
+              </Suspense>
             ) : (
               <p className="rounded-xl bg-paper px-4 py-3 text-sm text-muted">
                 The live map turns on once {driverName} marks the trip as departed.

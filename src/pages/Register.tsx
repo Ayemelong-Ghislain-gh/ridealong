@@ -122,8 +122,15 @@ export default function Register() {
       }
 
       const userId = authData.user.id
-      const { error: profileError } = await supabase.from('users').upsert([{ id: userId, ...profileFields, is_verified: false }], { onConflict: 'id' })
-      if (profileError) throw profileError
+      // Plain insert, then update if the sign-up trigger already created the
+      // row. (An "upsert" needs read access to phone numbers, which the
+      // database no longer gives out.)
+      const { error: insertError } = await supabase.from('users').insert([{ id: userId, ...profileFields, is_verified: false }])
+      if (insertError) {
+        if (insertError.code !== '23505') throw insertError
+        const { error: updateError } = await supabase.from('users').update(profileFields).eq('id', userId)
+        if (updateError) throw updateError
+      }
 
       if (data.role === 'driver') {
         const { error: driverError } = await supabase.from('driver_profiles').upsert(

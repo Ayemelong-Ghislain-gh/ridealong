@@ -60,7 +60,7 @@ export const BOOKING_SELECT = `
   id, trip_id, seats_booked, status, booking_reference, created_at,
   trip:trips!bookings_trip_id_fkey (
     id, driver_id, status, departure_date, departure_time, price_per_seat,
-    driver:users!trips_driver_id_fkey (full_name, phone, avatar_url),
+    driver:users!trips_driver_id_fkey (full_name, avatar_url),
     route:routes!trips_route_id_fkey (destination),
     park:taxi_parks!trips_park_id_fkey (name)
   )

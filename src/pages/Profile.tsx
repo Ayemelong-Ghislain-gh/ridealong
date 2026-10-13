@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type { ChangeEvent, FormEvent, ReactNode } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../hooks/useAuth'
 import { useFeedback } from '../context/FeedbackContext'
@@ -11,6 +11,7 @@ import { Input, Notice } from '../components/ui/Field'
 import { Avatar, Badge, Card, Stars, VerifiedMark } from '../components/ui/Display'
 import { InstallAppButton } from '../components/InstallAppButton'
 import { useInstallApp } from '../lib/installApp'
+import { useLocationShare } from '../context/LocationShareContext'
 import { isValidCameroonPhone, normalizePhoneInput } from '../lib/phone'
 import { getErrorMessage } from '../lib/errors'
 import type { DriverProfileInfo } from '../types/rows'
@@ -33,7 +34,9 @@ function Section({ title, description, children }: { title: string; description?
 
 export default function Profile() {
   const { user, profile, role, refreshProfile, signOut } = useAuth()
-  const { toast } = useFeedback()
+  const { toast, confirm } = useFeedback()
+  const location = useLocationShare()
+  const [deleting, setDeleting] = useState(false)
   const navigate = useNavigate()
   const fileInputRef = useRef<HTMLInputElement>(null)
   const { installed } = useInstallApp()
@@ -169,6 +172,38 @@ export default function Profile() {
       setDriverData({ ...driverData, skills: [...(driverData.skills || []), skill] })
     }
     setSkillInput('')
+  }
+
+  const deleteAccount = async () => {
+    if (!user) return
+    const ok = await confirm({
+      title: 'Delete your account?',
+      message: (
+        <>
+          This can’t be undone. Your name, phone number, photo, messages and {role === 'driver' ? 'vehicle details' : 'bookings'} are removed.
+          {role === 'driver' ? ' Your upcoming trips are cancelled and passengers are notified.' : ' Your upcoming bookings are cancelled.'}
+        </>
+      ),
+      confirmLabel: 'Delete my account',
+      cancelLabel: 'Keep my account',
+      danger: true,
+    })
+    if (!ok) return
+
+    setDeleting(true)
+    try {
+      if (location.sharing) await location.stop()
+      // Photo first: storage files can only be removed by their owner
+      await supabase.storage.from('avatars').remove([`${user.id}/avatar`])
+      const { error: rpcError } = await supabase.rpc('delete_my_account')
+      if (rpcError) throw rpcError
+      await signOut()
+      toast('Your account has been deleted.')
+      navigate('/', { replace: true })
+    } catch (err) {
+      toast(getErrorMessage(err, 'Account not deleted. Try again.'), 'error')
+      setDeleting(false)
+    }
   }
 
   const handleSignOut = async () => {
@@ -319,6 +354,17 @@ export default function Profile() {
         <Button variant="secondary" block onClick={handleSignOut}>
           Sign out
         </Button>
+
+        <div className="pt-6 text-center">
+          <Button variant="ghost" size="sm" className="text-danger" loading={deleting} onClick={deleteAccount}>
+            Delete my account
+          </Button>
+          <p className="mt-1 text-xs text-faint">
+            <Link to="/privacy" className="underline underline-offset-2 hover:text-ink">
+              Privacy policy
+            </Link>
+          </p>
+        </div>
       </div>
     </PageContainer>
   )

@@ -10,6 +10,20 @@ const PWA_ENABLED = false
 
 // https://vite.dev/config/
 export default defineConfig({
+  build: {
+    rollupOptions: {
+      output: {
+        // Libraries change rarely, so they get their own files that phones
+        // keep cached between app updates.
+        manualChunks: {
+          react: ['react', 'react-dom', 'react-router-dom'],
+          supabase: ['@supabase/supabase-js'],
+          query: ['@tanstack/react-query'],
+          forms: ['react-hook-form', 'zod', '@hookform/resolvers'],
+        },
+      },
+    },
+  },
   plugins: [
     react(),
     PWA_ENABLED &&

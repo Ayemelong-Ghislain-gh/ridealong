@@ -1,3 +1,5 @@
+import { lazy } from 'react'
+import type { ComponentType } from 'react'
 import { BrowserRouter, Routes, Route } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { AuthProvider } from './context/AuthContext'
@@ -6,18 +8,49 @@ import { LocationShareProvider } from './context/LocationShareContext'
 import { ProtectedRoute } from './components/ProtectedRoute'
 import { AppLayout } from './components/AppLayout'
 import LandingPage from './pages/LandingPage'
-import TripsPage from './pages/TripsPage'
-import Login from './pages/Login'
-import Register from './pages/Register'
-import ForgotPassword from './pages/ForgotPassword'
-import ResetPassword from './pages/ResetPassword'
-import CreateTrip from './pages/CreateTrip'
-import EditTrip from './pages/EditTrip'
-import DriverDashboard from './pages/DriverDashboard'
-import PassengerBookings from './pages/PassengerBookings'
-import Profile from './pages/Profile'
-import AdminDrivers from './pages/AdminDrivers'
-import NotFound from './pages/NotFound'
+
+// After a new version is deployed, a phone that still has the old app open
+// may ask for a page file that no longer exists. Reload once to get the new one.
+function lazyPage(load: () => Promise<{ default: ComponentType }>) {
+  return lazy(() =>
+    load()
+      .then((mod) => {
+        try {
+          sessionStorage.removeItem('ra-chunk-reload')
+        } catch {
+          /* storage unavailable */
+        }
+        return mod
+      })
+      .catch((err) => {
+        let reloaded = true
+        try {
+          reloaded = sessionStorage.getItem('ra-chunk-reload') === '1'
+          sessionStorage.setItem('ra-chunk-reload', '1')
+        } catch {
+          /* storage unavailable */
+        }
+        if (!reloaded) window.location.reload()
+        throw err
+      })
+  )
+}
+// Every other page is downloaded only when someone opens it, so the first
+// visit on mobile data loads a much smaller file.
+const TripsPage = lazyPage(() => import('./pages/TripsPage'))
+const Login = lazyPage(() => import('./pages/Login'))
+const Register = lazyPage(() => import('./pages/Register'))
+const ForgotPassword = lazyPage(() => import('./pages/ForgotPassword'))
+const ResetPassword = lazyPage(() => import('./pages/ResetPassword'))
+const CreateTrip = lazyPage(() => import('./pages/CreateTrip'))
+const EditTrip = lazyPage(() => import('./pages/EditTrip'))
+const DriverDashboard = lazyPage(() => import('./pages/DriverDashboard'))
+const PassengerBookings = lazyPage(() => import('./pages/PassengerBookings'))
+const Profile = lazyPage(() => import('./pages/Profile'))
+const AdminDrivers = lazyPage(() => import('./pages/AdminDrivers'))
+const PrivacyPolicy = lazyPage(() => import('./pages/PrivacyPolicy'))
+const DeleteAccountInfo = lazyPage(() => import('./pages/DeleteAccountInfo'))
+const NotFound = lazyPage(() => import('./pages/NotFound'))
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -44,6 +77,8 @@ function App() {
                   <Route path="/register" element={<Register />} />
                   <Route path="/forgot-password" element={<ForgotPassword />} />
                   <Route path="/reset-password" element={<ResetPassword />} />
+                  <Route path="/privacy" element={<PrivacyPolicy />} />
+                  <Route path="/delete-account" element={<DeleteAccountInfo />} />
 
                   <Route
                     path="/profile"

@@ -8,6 +8,9 @@ export function supportWhatsAppLink(message: string): string | null {
   return `https://wa.me/${SUPPORT_WHATSAPP}?text=${encodeURIComponent(message)}`
 }
 
+/** Contact email shown in the privacy policy and account deletion pages. */
+export const SUPPORT_EMAIL: string = (import.meta.env.VITE_SUPPORT_EMAIL || '').trim()
+
 /** Most seats one passenger can take in a single booking. */
 export const MAX_SEATS_PER_BOOKING = 5
 

@@ -7,6 +7,7 @@ import { Button } from '../components/ui/Button'
 import { controlClasses } from '../components/ui/Field'
 import { Avatar, Badge, EmptyState, PageHeader, Skeleton, Stars } from '../components/ui/Display'
 import { getErrorMessage } from '../lib/errors'
+import { useContactPhones } from '../hooks/useContactPhones'
 
 interface DriverRow {
   id: string
@@ -19,7 +20,7 @@ interface DriverRow {
   rating: number | null
   total_trips: number | null
   created_at: string
-  user: { full_name: string | null; phone: string | null; avatar_url: string | null } | null
+  user: { full_name: string | null; avatar_url: string | null } | null
 }
 
 type Filter = 'pending' | 'verified' | 'all'
@@ -40,7 +41,7 @@ export default function AdminDrivers() {
         .select(
           `id, vehicle_make, vehicle_model, vehicle_color, vehicle_plate, vehicle_capacity,
            is_verified_driver, rating, total_trips, created_at,
-           user:users (full_name, phone, avatar_url)`
+           user:users (full_name, avatar_url)`
         )
         .order('created_at', { ascending: false })
       if (error) throw error
@@ -48,15 +49,17 @@ export default function AdminDrivers() {
     },
   })
 
+  const { data: phones } = useContactPhones((data || []).map((d) => d.id))
+
   const drivers = useMemo(() => {
     const term = search.trim().toLowerCase()
     return (data || []).filter((d) => {
       if (filter === 'pending' && d.is_verified_driver) return false
       if (filter === 'verified' && !d.is_verified_driver) return false
       if (!term) return true
-      return [d.user?.full_name, d.user?.phone, d.vehicle_plate].some((v) => v?.toLowerCase().includes(term))
+      return [d.user?.full_name, phones?.[d.id], d.vehicle_plate].some((v) => v?.toLowerCase().includes(term))
     })
-  }, [data, filter, search])
+  }, [data, filter, search, phones])
 
   const pendingCount = (data || []).filter((d) => !d.is_verified_driver).length
 
@@ -135,9 +138,9 @@ export default function AdminDrivers() {
                   <p className="truncate font-bold">{d.user?.full_name || 'Unnamed driver'}</p>
                   {d.is_verified_driver ? <Badge tone="route">Verified</Badge> : <Badge tone="taxi">Waiting</Badge>}
                 </div>
-                {d.user?.phone && (
-                  <a href={`tel:${d.user.phone}`} className="text-sm text-muted underline-offset-4 hover:underline">
-                    {d.user.phone}
+                {phones?.[d.id] && (
+                  <a href={`tel:${phones[d.id]}`} className="text-sm text-muted underline-offset-4 hover:underline">
+                    {phones[d.id]}
                   </a>
                 )}
               </div>

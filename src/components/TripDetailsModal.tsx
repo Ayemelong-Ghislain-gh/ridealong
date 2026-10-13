@@ -7,6 +7,7 @@ import { Avatar, BookingStatusBadge, TripStatusBadge } from './ui/Display'
 import { LoadingCar } from './LoadingCar'
 import { RouteLabel } from './RouteLabel'
 import { ChatModal } from './ChatModal'
+import { useContactPhones } from '../hooks/useContactPhones'
 import { formatTripDate, formatTripTime, formatXAF, plural } from '../lib/format'
 
 interface TripDetailsModalProps {
@@ -19,7 +20,8 @@ interface PassengerBooking {
   seats_booked: number
   status: string
   booking_reference: string
-  passenger: { full_name: string | null; phone: string | null; avatar_url: string | null } | null
+  passenger_id: string
+  passenger: { full_name: string | null; avatar_url: string | null } | null
 }
 
 interface TripInfo {
@@ -55,8 +57,8 @@ export function TripDetailsModal({ tripId, onClose }: TripDetailsModalProps) {
         supabase
           .from('bookings')
           .select(
-            `id, seats_booked, status, booking_reference,
-             passenger:users!bookings_passenger_id_fkey (full_name, phone, avatar_url)`
+            `id, seats_booked, status, booking_reference, passenger_id,
+             passenger:users!bookings_passenger_id_fkey (full_name, avatar_url)`
           )
           .eq('trip_id', tripId)
           .order('created_at', { ascending: true }),
@@ -72,6 +74,7 @@ export function TripDetailsModal({ tripId, onClose }: TripDetailsModalProps) {
   const active = (data?.bookings || []).filter((b) => b.status !== 'cancelled')
   const cancelled = (data?.bookings || []).filter((b) => b.status === 'cancelled')
   const bookedSeats = active.reduce((sum, b) => sum + b.seats_booked, 0)
+  const { data: phones } = useContactPhones(active.map((b) => b.passenger_id))
 
   return (
     <Modal title="Trip details" onClose={onClose} size="lg">
@@ -120,10 +123,10 @@ export function TripDetailsModal({ tripId, onClose }: TripDetailsModalProps) {
                   </p>
                 </div>
                 <div className="flex shrink-0 gap-2">
-                  {b.passenger?.phone && (
+                  {phones?.[b.passenger_id] && (
                     <a
-                      href={`tel:${b.passenger.phone}`}
-                      aria-label={`Call ${b.passenger.full_name ?? 'passenger'}`}
+                      href={`tel:${phones[b.passenger_id]}`}
+                      aria-label={`Call ${b.passenger?.full_name ?? 'passenger'}`}
                       className="flex h-10 items-center rounded-full border border-line px-3.5 text-sm font-semibold hover:border-ink/30"
                     >
                       Call
